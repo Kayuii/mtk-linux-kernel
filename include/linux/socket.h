@@ -257,7 +257,7 @@ struct ucred {
 #define MSG_CMSG_CLOEXEC 0x40000000	/* Set close_on_exit for file
 					   descriptor received through
 					   SCM_RIGHTS */
-#define MSG_KERNSPACE		0x40000
+#define MSG_NETSPLICE		0x40000
 #define MSG_NOCATCHSIGNAL	0x80000
 #if defined(CONFIG_COMPAT)
 #define MSG_CMSG_COMPAT	0x80000000	/* This message needs 32 bit fixups */

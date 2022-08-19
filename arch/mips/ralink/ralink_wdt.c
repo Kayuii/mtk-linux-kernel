@@ -165,49 +165,55 @@ void set_wdg_timer_ebl(unsigned int timer, unsigned int ebl)
 
     }
 #elif defined (CONFIG_RALINK_MT7620)
-    if(timer==TMR1CTL) {
-        result=sysRegRead(GPIOMODE);
-        /*
-         * GPIOMODE[22:21] WDT_GPIO_MODE
-         * 2'b00:Normal
-         * 2'b01:REFCLK0
-         * 2'b10:GPIO Mode
-         */
-        result &= ~(0x3<<21);
+	if(timer==TMR1CTL) {
+		result=sysRegRead(GPIOMODE);
+		/*
+		 * GPIOMODE[22:21] WDT_GPIO_MODE
+		 * 2'b00:Normal
+		 * 2'b01:REFCLK0
+		 * 2'b10:GPIO Mode
+		 */
+		result &= ~(0x3<<21);
 
-        if(ebl==1){
-            result |= (0x0<<21);
-        }else {
-            result |= (0x2<<21); //GPIO
-            //result |= (0x1<<21); //REFCLK0
-        }
-        sysRegWrite(GPIOMODE,result);
-    }
-#elif defined (CONFIG_RALINK_MT7621) || defined (CONFIG_RALINK_MT7628)
-    if(timer==TMR1CTL) {
-        result=sysRegRead(GPIOMODE);
-        /*
-         * GPIOMODE[22:21] WDT_GPIO_MODE
-         * 2'b00:Normal
-         * 2'b01:REFCLK0
-         * 2'b10:GPIO Mode
-         */
-        result &= ~(0x3<<21);
+		if(ebl==1) {
+			result |= (0x0<<21);
+		} else {
+			result |= (0x2<<21); //GPIO
+			//result |= (0x1<<21); //REFCLK0
+		}
+		sysRegWrite(GPIOMODE,result);
+	}
+#elif defined (CONFIG_RALINK_MT7621)
+	if(timer==TMR1CTL) {
+		result=sysRegRead(GPIOMODE);
+		/*
+		 * GPIOMODE[9:8] GPIO_MODE
+		 * 00: Watch dog
+		 * 01: GPIO
+		 * 10: Reference clock
+		 * 11: Reference clock
+		 */
+		result &= ~(0x3<<8);
+		if (ebl != 1)
+			result |= (0x1<<8); //GPIO
 
-        if(ebl==1){
-            result |= (0x0<<21);
-        }else {
-            result |= (0x2<<21); //GPIO
-            //result |= (0x1<<21); //REFCLK0
-        }
-        sysRegWrite(GPIOMODE,result);
-       
-        //reset output low period is 100us
-	result=sysRegRead(RSTSTAT);
-	result &= ~(0x3FFF);
-	result |= 0x64;
-	sysRegWrite(RSTSTAT, result);
-    }
+		sysRegWrite(GPIOMODE,result);
+	}
+#elif defined (CONFIG_RALINK_MT7628)
+	if(timer==TMR1CTL) {
+		result=sysRegRead(GPIOMODE);
+		/*
+		 * GPIOMODE[14] GPIO_MODE
+		 * 0: Watch dog
+		 * 1: GPIO
+		 */
+		if(ebl==1)
+			result &= ~(0x1<<14);
+		else
+			result |= 0x1<<14;
+
+		sysRegWrite(GPIOMODE,result);
+	}
 #endif
 #else
 #if defined(CONFIG_RALINK_MT7620)

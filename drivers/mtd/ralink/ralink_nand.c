@@ -1332,7 +1332,7 @@ nand_get_device(struct ra_nand_chip *ra, int new_state)
 	int ret = 0;
 
 #if !defined (__UBOOT__)
-	ret = mutex_lock_interruptible(ra->controller);
+	ret = mutex_lock(ra->controller);
 #endif ///
 	if (!ret) 
 		ra->state = new_state;

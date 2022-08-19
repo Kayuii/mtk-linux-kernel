@@ -30,11 +30,12 @@
 #define phys_to_bus(a) (a & 0x1FFFFFFF)
 #endif
 
-
-
-
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36)
 #define BIT(x)	    ((1 << x))
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0)) && defined (CONFIG_ARCH_MT7623)
+#define USE_BUILD_SKB
 #endif
 /* bits range: for example BITS(16,23) = 0xFF0000
  *   ==>  (BIT(m)-1)   = 0x0000FFFF     ~(BIT(m)-1)   => 0xFFFF0000
@@ -120,7 +121,7 @@
 
 #if defined (CONFIG_RALINK_MT7621) || defined (CONFIG_ARCH_MT7623)
 #define QFE_INT_ALL		(RLS_DONE_INT | RX_DONE_INT0 | RX_DONE_INT1| RX_DONE_INT2| RX_DONE_INT3)
-#define QFE_INT_DLY_INIT	(RLS_DLY_INT | RX_DLY_INT)
+#define QFE_INT_DLY_INIT	(RLS_DLY_INT)
 
 #define NUM_QDMA_PAGE	    512	
 #define QDMA_PAGE_SIZE      2048
@@ -384,6 +385,8 @@ typedef struct _PSEUDO_ADAPTER {
 #define FE_INT_ENABLE2	    RALINK_FRAME_ENGINE_BASE + 0x0c
 //#define FC_DROP_STA         RALINK_FRAME_ENGINE_BASE + 0x18
 #define FOE_TS_T            RALINK_FRAME_ENGINE_BASE + 0x10
+
+#define FE_GLO_MISC         RALINK_FRAME_ENGINE_BASE + 0x124
 
 #if defined (CONFIG_RALINK_MT7620)
 #define GDMA1_RELATED       0x0600
@@ -794,6 +797,12 @@ typedef struct _PSEUDO_ADAPTER {
 #define LRO_RX_RING3_CTRL_DW2		(RALINK_FRAME_ENGINE_BASE+LRO_RXRING3_OFFSET+0x2C)
 #define LRO_RX_RING3_CTRL_DW3		(RALINK_FRAME_ENGINE_BASE+LRO_RXRING3_OFFSET+0x30)
 
+#define ADMA_DBG_OFFSET          0x0a30
+#define ADMA_TX_DBG0       		(RALINK_FRAME_ENGINE_BASE+ADMA_DBG_OFFSET+0x00)
+#define ADMA_TX_DBG1       		(RALINK_FRAME_ENGINE_BASE+ADMA_DBG_OFFSET+0x04)
+#define ADMA_RX_DBG0       		(RALINK_FRAME_ENGINE_BASE+ADMA_DBG_OFFSET+0x08)
+#define ADMA_RX_DBG1       		(RALINK_FRAME_ENGINE_BASE+ADMA_DBG_OFFSET+0x0C)
+
 /* LRO RX ring mode */
 #define PDMA_RX_NORMAL_MODE         (0x0)
 #define PDMA_RX_PSE_MODE            (0x1)
@@ -1118,7 +1127,10 @@ struct PDMA_LRO_AUTO_TLB_INFO {
 #define VQTX_NUM_1  (4<<4)
 #define VQTX_NUM_2  (4<<8)
 #define VQTX_NUM_3  (4<<12)
-
+#define VQTX_NUM0  256
+#define VQTX_NUM1  256
+#define VQTX_NUM2  256
+#define VQTX_NUM3  256
 /*=========================================
       SFQ Table Format define
 =========================================*/
@@ -1278,11 +1290,12 @@ struct SFQ_table {
 #include <mach/sync_write.h>
 #define sysRegRead(phys)            (*(volatile unsigned int *)((phys)))
 //#define sysRegWrite(phys, val)      mt65xx_reg_sync_writel((val), (phys))
+#define sysRegWrite(phys, val)      ((*(volatile unsigned int *)(phys)) = (val))
 #define PHYS_TO_K1(physaddr)	    (physaddr)
 #else
 #define PHYS_TO_K1(physaddr) KSEG1ADDR(physaddr)
 #define sysRegRead(phys)        (*(volatile unsigned int *)PHYS_TO_K1(phys))
-//#define sysRegWrite(phys, val)  ((*(volatile unsigned int *)PHYS_TO_K1(phys)) = (val))
+#define sysRegWrite(phys, val)  ((*(volatile unsigned int *)PHYS_TO_K1(phys)) = (val))
 //readback test..
 /*
 #define sysRegWrite(phys, val)  do {\
@@ -1294,7 +1307,7 @@ struct SFQ_table {
 	                                    }while(0);
 */
 #endif
-extern void sysRegWrite(unsigned int phys, unsigned int val);
+//extern void sysRegWrite(unsigned int phys, unsigned int val);
 
 #define u_long	unsigned long
 #define u32	unsigned int
@@ -1830,18 +1843,19 @@ typedef struct end_device
 {
 
     unsigned int        tx_cpu_owner_idx0;
+    unsigned int        tx_cpu_release_idx0;
     unsigned int        rx_cpu_owner_idx0;
     unsigned int        fe_int_status;
     unsigned int        tx_full; 
     
 #if !defined (CONFIG_RAETH_QDMA)
-    unsigned int	phy_tx_ring0;
+    dma_addr_t	phy_tx_ring0;
 #else
     /* QDMA Tx  PTR */
     struct sk_buff *free_skb[NUM_TX_DESC];
     unsigned int tx_dma_ptr;
     unsigned int tx_cpu_ptr;
-    unsigned int free_txd_num;
+    atomic_t free_txd_num;
     unsigned int free_txd_head;
     unsigned int free_txd_tail;	
     struct QDMA_txdesc *txd_pool;
@@ -1854,11 +1868,11 @@ typedef struct end_device
     struct PDMA_rxdesc *qrx_ring;
     unsigned int phy_qrx_ring;
 #ifdef CONFIG_RAETH_PDMATX_QDMARX	/* QDMA RX */
-    unsigned int phy_tx_ring0;
+    dma_addr_t phy_tx_ring0;
 #endif
 #endif
 
-    unsigned int	phy_rx_ring0, phy_rx_ring1, phy_rx_ring2, phy_rx_ring3;
+	dma_addr_t phy_rx_ring0, phy_rx_ring1, phy_rx_ring2, phy_rx_ring3;
 
 #if defined (CONFIG_RALINK_RT3052) || defined (CONFIG_RALINK_RT3352) || \
     defined (CONFIG_RALINK_RT5350) || defined (CONFIG_RALINK_RT6855) || \
@@ -1877,7 +1891,6 @@ typedef struct end_device
     struct work_struct  rx_wq;
 #endif
     struct              tasklet_struct     rx_tasklet;
-    struct              tasklet_struct     tx_tasklet;
 #endif // WORKQUEUE_BH //
 
 #if defined(CONFIG_RAETH_QOS)
@@ -1890,36 +1903,27 @@ typedef struct end_device
 
     struct              net_device_stats stat;  /* The new statistics table. */
     spinlock_t          page_lock;              /* Page register locks */
-//    spinlock_t          irq_lock;               /* IRQ register lock*/
+    spinlock_t          xmit_lock;           
     struct PDMA_txdesc *tx_ring0;
 #if defined(CONFIG_RAETH_QOS)
     struct PDMA_txdesc *tx_ring1;
     struct PDMA_txdesc *tx_ring2;
     struct PDMA_txdesc *tx_ring3;
 #endif
-    struct PDMA_rxdesc *rx_ring0;
-    struct sk_buff     *netrx0_skbuf[NUM_RX_DESC];
-#if defined (CONFIG_RAETH_HW_LRO)
-    struct PDMA_rxdesc *rx_ring3;
-    struct sk_buff     *netrx3_skbuf[NUM_RX_DESC];
-    struct PDMA_rxdesc *rx_ring2;
-    struct sk_buff     *netrx2_skbuf[NUM_RX_DESC];
-    struct PDMA_rxdesc *rx_ring1;
-    struct sk_buff     *netrx1_skbuf[NUM_RX_DESC];
-#elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
-    struct PDMA_rxdesc *rx_ring1;
-    struct sk_buff     *netrx1_skbuf[NUM_RX_DESC];
-#if defined(CONFIG_ARCH_MT7623)
-    struct PDMA_rxdesc *rx_ring2;
-    struct sk_buff     *netrx2_skbuf[NUM_RX_DESC];
-    struct PDMA_rxdesc *rx_ring3;
-    struct sk_buff     *netrx3_skbuf[NUM_RX_DESC];
-#endif  /* CONFIG_ARCH_MT7623 */
+    struct PDMA_rxdesc *rx_ring[MAX_RX_RING_NUM];
+#ifdef USE_BUILD_SKB
+    void *netrx_skbuf[MAX_RX_RING_NUM][NUM_RX_DESC];
+#else
+    struct sk_buff     *netrx_skbuf[MAX_RX_RING_NUM][NUM_RX_DESC];
 #endif
+    unsigned int rx_calc_idx[MAX_RX_RING_NUM];
+
 #ifdef CONFIG_RAETH_NAPI
     atomic_t irq_sem;
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,35)
     struct napi_struct napi;
+    struct napi_struct napi_tx;
+    struct napi_struct napi_rx;
 #endif
 #endif
 #ifdef CONFIG_PSEUDO_SUPPORT
@@ -1987,7 +1991,7 @@ typedef struct end_device
 #define RAETH_FE_INT_ALL FE_INT_ALL
 #define RAETH_FE_INT_ENABLE FE_INT_ENABLE
 #define RAETH_FE_INT_DLY_INIT FE_INT_DLY_INIT
-#define RAETH_FE_INT_SETTING RX_DONE_INT0 | RX_DONE_INT1 | TX_DONE_INT0 | TX_DONE_INT1 | TX_DONE_INT2 | TX_DONE_INT3
+#define RAETH_FE_INT_SETTING RX_DONE_INT0 | RX_DONE_INT1 | RX_DONE_INT2 | RX_DONE_INT3 | TX_DONE_INT0 | TX_DONE_INT1 | TX_DONE_INT2 | TX_DONE_INT3
 #define QFE_INT_SETTING RX_DONE_INT0 | RX_DONE_INT1 | TX_DONE_INT0 | TX_DONE_INT1 | TX_DONE_INT2 | TX_DONE_INT3
 #define RAETH_TX_DLY_INT TX_DLY_INT
 #define RAETH_TX_DONE_INT0 TX_DONE_INT0

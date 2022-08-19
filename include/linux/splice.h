@@ -20,6 +20,7 @@
 #define SPLICE_F_MORE	(0x04)	/* expect more data */
 #define SPLICE_F_GIFT	(0x08)	/* pages passed in are a gift */
 
+#define SPLICE_F_SMB	(0x10)	/* data from Samba applications */
 /*
  * Passed to the actors
  */

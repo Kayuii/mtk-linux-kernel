@@ -273,7 +273,6 @@ u32 mii_mgr_cl45_set_address(u32 port_num, u32 dev_addr, u32 reg_addr)
 
 u32 mii_mgr_read_cl45(u32 port_num, u32 dev_addr, u32 reg_addr, u32 *read_data)
 {
-	u32 volatile status = 0;
 	u32 rc = 0;
 	unsigned long volatile t_start = jiffies;
 	u32 volatile data = 0;
@@ -311,7 +310,7 @@ u32 mii_mgr_read_cl45(u32 port_num, u32 dev_addr, u32 reg_addr, u32 *read_data)
 			printk("\n Set Operation: MDIO Read operation is ongoing and Time Out!!\n");
 			return 0;
 		}
-		status = sysRegRead(MDIO_PHY_CONTROL_0);
+		sysRegRead(MDIO_PHY_CONTROL_0);
 	}
 
 }

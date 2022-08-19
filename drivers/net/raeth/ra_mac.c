@@ -696,8 +696,8 @@ int QDMARead(struct seq_file *seq, void *v)
 	sw_fq = (temp&0xFFFF0000)>>16;
 	hw_fq = (temp&0x0000FFFF);
 	seq_printf(seq, "SW TXD: %d/%d; HW TXD: %d/%d\n", sw_fq, NUM_TX_DESC, hw_fq,NUM_QDMA_PAGE);
-	seq_printf(seq, "SW TXD virtual start address: 0x%08x\n", ei_local->txd_pool);
-	seq_printf(seq, "HW TXD virtual start address: 0x%08x\n\n", free_head);
+	seq_printf(seq, "SW TXD virtual start address: 0x%p\n", (void *)ei_local->txd_pool);
+	seq_printf(seq, "HW TXD virtual start address: 0x%p\n\n", (void *)free_head);
 
 	seq_printf(seq, "==== Scheduler Information ====\n");
 	temp = sysRegRead(QDMA_TX_SCH);
@@ -739,7 +739,7 @@ int QDMARead(struct seq_file *seq, void *v)
 	}
 #if defined (CONFIG_ARCH_MT7623) && defined(CONFIG_HW_SFQ)
 	seq_printf(seq, "==== Virtual Queue Information ====\n");
-	seq_printf(seq, "VQTX_TB_BASE_0:0x%08x;VQTX_TB_BASE_1:0x%08x;VQTX_TB_BASE_2:0x%08x;VQTX_TB_BASE_3:0x%08x\n", \
+	seq_printf(seq, "VQTX_TB_BASE_0:0x%p;VQTX_TB_BASE_1:0x%p;VQTX_TB_BASE_2:0x%p;VQTX_TB_BASE_3:0x%p\n", \
 			sfq0, sfq1, sfq2, sfq3);
 	temp = sysRegRead(VQTX_NUM);
 	seq_printf(seq, "VQTX_NUM_0:0x%01x;VQTX_NUM_1:0x%01x;VQTX_NUM_2:0x%01x;VQTX_NUM_3:0x%01x\n\n", \
@@ -857,7 +857,7 @@ int RxRingRead(struct seq_file *seq, void *v)
 	}
 
 	for (i=0; i < NUM_RX_DESC; i++) {
-		memcpy(&rx_ring[i], &ei_local->rx_ring0[i], sizeof(struct PDMA_rxdesc));
+		memcpy(&rx_ring[i], &ei_local->rx_ring[0][i], sizeof(struct PDMA_rxdesc));
 	}
 	
 	for (i=0; i < NUM_RX_DESC; i++) {
@@ -926,7 +926,7 @@ int RxLRORingRead(struct seq_file *seq, void *v, struct PDMA_rxdesc *rx_ring_p)
 int RxRing1Read(struct seq_file *seq, void *v)
 {
 	END_DEVICE *ei_local = netdev_priv(dev_raether);
-    RxLRORingRead(seq, v, ei_local->rx_ring1);
+    RxLRORingRead(seq, v, ei_local->rx_ring[1]);
 
     return 0;
 }
@@ -934,7 +934,7 @@ int RxRing1Read(struct seq_file *seq, void *v)
 int RxRing2Read(struct seq_file *seq, void *v)
 {
 	END_DEVICE *ei_local = netdev_priv(dev_raether);
-    RxLRORingRead(seq, v, ei_local->rx_ring2);
+    RxLRORingRead(seq, v, ei_local->rx_ring[2]);
 
     return 0;
 }
@@ -942,7 +942,7 @@ int RxRing2Read(struct seq_file *seq, void *v)
 int RxRing3Read(struct seq_file *seq, void *v)
 {
 	END_DEVICE *ei_local = netdev_priv(dev_raether);
-    RxLRORingRead(seq, v, ei_local->rx_ring3);
+    RxLRORingRead(seq, v, ei_local->rx_ring[3]);
 
     return 0;
 }
@@ -1753,11 +1753,14 @@ void HwLroAutoTlbDump(struct seq_file *seq, unsigned int index)
     seq_printf(seq, "TCP SPORT = %d | TCP DPORT = %d\n", 
         pdma_lro_auto_tlb.auto_tlb_info0.STP, 
         pdma_lro_auto_tlb.auto_tlb_info0.DTP);
+    seq_printf(seq, "VLAN_VID_VLD = %d\n", 
+    	pdma_lro_auto_tlb.auto_tlb_info6.VLAN_VID_VLD);
     seq_printf(seq, "VLAN1 = %d | VLAN2 = %d | VLAN3 = %d | VLAN4 =%d \n", 
-        pdma_lro_auto_tlb.auto_tlb_info5.VLAN_VID0,
-        (pdma_lro_auto_tlb.auto_tlb_info5.VLAN_VID0 << 12),
-        (pdma_lro_auto_tlb.auto_tlb_info5.VLAN_VID0 << 24),
-        pdma_lro_auto_tlb.auto_tlb_info6.VLAN_VID1);
+        (pdma_lro_auto_tlb.auto_tlb_info5.VLAN_VID0 & 0xfff),
+        ((pdma_lro_auto_tlb.auto_tlb_info5.VLAN_VID0 >> 12) & 0xfff),
+        ((pdma_lro_auto_tlb.auto_tlb_info6.VLAN_VID1 << 8) |
+        	((pdma_lro_auto_tlb.auto_tlb_info5.VLAN_VID0 >> 24) & 0xfff)),
+        ((pdma_lro_auto_tlb.auto_tlb_info6.VLAN_VID1 >> 4) & 0xfff));
     seq_printf(seq, "TPUT = %d | FREQ = %d\n", dw_len, cnt);
     seq_printf(seq, "PRIORITY = %d\n", priority);
 }

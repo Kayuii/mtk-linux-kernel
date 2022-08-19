@@ -55,7 +55,8 @@ static int mt76xx_codec_init(struct snd_soc_codec *codec);
 /****************************/
 /*GLOBAL VARIABLE DEFINITION*/
 /****************************/
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,20)
+//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,20)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,14)
 extern struct snd_soc_dai_driver mt76xx_i2s_dai;
 extern struct snd_soc_platform_driver mt76xx_soc_platform;
 #else
@@ -79,13 +80,19 @@ static struct snd_soc_ops mtk_audio_ops = {
 	.startup = mt76xx_codec_startup,
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,20)
+#define CODEC_NAME	"wm8960.1-001a"
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,14)
+#define CODEC_NAME      "wm8960.0-001a"
+#endif
+
 static struct snd_soc_dai_link mtk_audio_dai = {
 	.name = "mtk_dai",
 	.stream_name = "WMserious PCM",
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,38)
 	.cpu_dai_name	= "mt76xx-i2s",
 	.codec_dai_name	= "wm8960-hifi",
-	.codec_name	= "wm8960.1-001a",
+	.codec_name	= CODEC_NAME,
 	.platform_name	= "mt76xx-pcm",
 	.ignore_pmdown_time = true,
 #else
@@ -301,7 +308,8 @@ static void __exit mt76xx_machine_exit(void)
 	printk("******* %s *******\n", __func__);
 
 	platform_device_unregister(mt76xx_audio_device);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,20)
+//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,20)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,14)
 	/* Do nothing */
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,38)
 	snd_soc_unregister_platform(&mt76xx_audio_device->dev);

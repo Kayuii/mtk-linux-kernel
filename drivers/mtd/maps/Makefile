@@ -2,6 +2,9 @@
 # linux/drivers/maps/Makefile
 #
 
+EXTRA_CFLAGS += -Wall
+EXTRA_CFLAGS += -Werror
+
 ifeq ($(CONFIG_MTD_COMPLEX_MAPPINGS),y)
 obj-$(CONFIG_MTD)		+= map_funcs.o
 endif

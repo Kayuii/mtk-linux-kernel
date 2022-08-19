@@ -51,6 +51,9 @@ SECTIONS
 	/* read-only */
 	_text = .;	/* Text and read-only data */
 	.text : {
+#if defined(CONFIG_RALINK_MT7628) || defined(CONFIG_RALINK_MT7620)
+                . = . + 0x8000;
+#endif
 		TEXT_TEXT
 		SCHED_TEXT
 		LOCK_TEXT

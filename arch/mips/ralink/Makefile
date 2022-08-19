@@ -30,7 +30,7 @@ obj-$(CONFIG_MTK_MTD_NAND) +=  dev-nand.o
 ifeq ($(CONFIG_RALINK_MT7621),y)
 obj-$(CONFIG_MTD_ANY_RALINK) +=  dev-nand.o
 endif
-#obj-$(CONFIG_I2C_RALINK) +=  dev-i2c.o
+obj-$(CONFIG_I2C_MTK) +=  i2c-slave.o
 
 obj-$(CONFIG_RALINK_RT3883) +=  ehci_ohci.o udc.o
 obj-$(CONFIG_RALINK_RT3352) +=  ehci_ohci.o udc.o
@@ -38,3 +38,7 @@ obj-$(CONFIG_RALINK_RT5350) +=  ehci_ohci.o udc.o
 obj-$(CONFIG_RALINK_RT6855) +=  ehci_ohci.o udc.o
 obj-$(CONFIG_RALINK_MT7620) +=  ehci_ohci.o udc.o
 obj-$(CONFIG_RALINK_MT7628) +=  ehci_ohci.o udc.o
+
+ifeq ($(CONFIG_SND_MT76XX_SOC), y)
+obj-y += mt_audio.o
+endif

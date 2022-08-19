@@ -463,6 +463,9 @@ int i2s_mem_unmap(i2s_config_type* ptri2s_config)
 
 	page_size = I2S_PAGE_SIZE;
 
+	if(ptri2s_config->mmap_index == 0)
+		return;
+
 	if(ptri2s_config->pMMAPBufPtr[0])
 	{	
 		printk("ummap MMAP[0]=0x%08X\n", (u32)ptri2s_config->pMMAPBufPtr[0]);

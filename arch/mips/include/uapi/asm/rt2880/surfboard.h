@@ -50,7 +50,7 @@
 #define MAX_IDE_HWIFS		(2)	/* Graphite board */
 
 #define GCMP_BASE_ADDR                  0x1fbf8000
-#define GCMP_ADDRSPACE_SZ               (256 * 1024)
+#define GCMP_ADDRSPACE_SZ               (32 * 1024)
 
 /*
  *  * GIC Specific definitions

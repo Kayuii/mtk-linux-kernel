@@ -1760,13 +1760,13 @@ ssize_t generic_splice_from_socket(struct file *file, struct socket *sock,
 	msg.msg_iovlen = nr_pages ;
 	msg.msg_control = NULL;
 	msg.msg_controllen = 0;
-	msg.msg_flags = MSG_KERNSPACE;
+	//msg.msg_flags = MSG_NETSPLICE;
 	rcvtimeo = sock->sk->sk_rcvtimeo;
 	sock->sk->sk_rcvtimeo = 8 * HZ;
 
 
 	ret = kernel_recvmsg(sock, &msg, &iov[0], nr_pages, count,
-			     MSG_WAITALL | MSG_NOCATCHSIGNAL);
+			     MSG_WAITALL | MSG_NOCATCHSIGNAL | MSG_NETSPLICE);
 
 	sock->sk->sk_rcvtimeo = rcvtimeo;
 	if(ret != count) {
@@ -2175,30 +2175,30 @@ SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 	error = -EBADF;
 
 #if defined (CONFIG_SPLICE_NET_SUPPORT)
-	 /* check if fd_in is a socket */
-	sock = sockfd_lookup(fd_in, &error);
-	if (sock) {
-		out = NULL;
-		if (!sock->sk)
-			goto done;
-		out = fget_light(fd_out, &fput_out);
+	if ((flags & SPLICE_F_SMB) != 0) {
+	 	/* check if fd_in is a socket */
+		sock = sockfd_lookup(fd_in, &error);
+		if (sock) {
+			out = NULL;
+			if (!sock->sk)
+				goto done;
+			out = fget_light(fd_out, &fput_out);
 
-		if (out) {
-			if (!(out->f_mode & FMODE_WRITE))
-				goto done;
-			if (!out->f_op->splice_from_socket) {
-				goto done;
+			if (out) {
+				if (!(out->f_mode & FMODE_WRITE))
+					goto done;
+				if (!out->f_op->splice_from_socket)
+					goto done;
+				error = out->f_op->splice_from_socket(out, sock, off_out, len);
 			}
-			error = out->f_op->splice_from_socket(out, sock, off_out, len);
-		}
 done:
-                if (out)
-                        fput_light(out, fput_out);
-                fput(sock->file);
-
-                return error;
+ 	               if (out)
+        	                fput_light(out, fput_out);
+	                fput(sock->file);
+	
+        	        return error;
+		}
         }
-
 #else
 
 	in = fdget(fd_in);

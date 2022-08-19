@@ -51,7 +51,7 @@
 #endif
 #define NUM_PQ 16
 #define NUM_PQ_RESV 4
-#define FFA 2048
+#define FFA (2048-64)
 #define QUEUE_OFFSET 0x10
 #define NUM_TX_DESC (NUM_PQ * NUM_PQ_RESV + FFA)
 #else
@@ -99,6 +99,7 @@
 #define IRQ_ENET0	3 	/* hardware interrupt #3, defined in RT2880 Soc Design Spec Rev 0.03, pp43 */
 #endif
 
+#define MAX_RX_RING_NUM 4
 #if defined (CONFIG_RAETH_HW_LRO)
 #define	HW_LRO_TIMER_UNIT   1
 #define	HW_LRO_REFRESH_TIME 50000
@@ -142,5 +143,8 @@ u32 mii_mgr_cl45_set_address(u32 port_num, u32 dev_addr, u32 reg_addr);
 u32 mii_mgr_read_cl45(u32 port_num, u32 dev_addr, u32 reg_addr, u32 *read_data);
 u32 mii_mgr_write_cl45(u32 port_num, u32 dev_addr, u32 reg_addr, u32 write_data);
 void fe_sw_init(void);
+#if defined(CONFIG_ARCH_MT7623)
+void fe_do_reset(void);
+#endif
 
 #endif

@@ -551,7 +551,7 @@ int FoeUnBindEntry(struct hwnat_args *opt)
 
 	entry = &PpeFoeBase[opt->entry_num];
 
-	entry->ipv4_hnapt.udib1.state = UNBIND;
+	entry->ipv4_hnapt.udib1.state = INVALID;
 	entry->ipv4_hnapt.udib1.time_stamp = RegRead(FOE_TS) & 0xFF;
 
 #if defined (CONFIG_HNAT_V2)

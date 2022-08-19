@@ -4,7 +4,6 @@
 menuconfig RALINK_I2C_CODEC
 	tristate "I2C-Codec controller"
 #	select RALINK_I2C
-	select MTK_I2C
 	select I2C_MTK
 #	select RALINK_GDMA
 	default n

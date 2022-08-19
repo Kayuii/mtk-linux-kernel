@@ -631,19 +631,10 @@ __BUILD_PROT_BLAST_CACHE_RANGE(i, icache, Hit_Invalidate_I)
 
 #endif
 
-#if (defined (CONFIG_RALINK_MT7621) && (CONFIG_RALINK_RAM_SIZE < 512))
-__BUILD_BLAST_CACHE_RANGE(s, scache, Hit_Writeback_SD, protected_)
-__BUILD_BLAST_CACHE_RANGE(d, dcache, Hit_Writeback_D, )
-#else
 __BUILD_BLAST_CACHE_RANGE(s, scache, Hit_Writeback_Inv_SD, protected_)
 __BUILD_BLAST_CACHE_RANGE(d, dcache, Hit_Writeback_Inv_D, )
-#endif
 __BUILD_BLAST_CACHE_RANGE(i, icache, Hit_Invalidate_I, )
-#if (defined (CONFIG_RALINK_MT7621) && (CONFIG_RALINK_RAM_SIZE < 512))
-__BUILD_BLAST_CACHE_RANGE(s, scache, Hit_Writeback_SD, )
-#else
 __BUILD_BLAST_CACHE_RANGE(s, scache, Hit_Writeback_Inv_SD, )
-#endif
 /* blast_inv_dcache_range */
 __BUILD_BLAST_CACHE_RANGE(inv_d, dcache, Hit_Invalidate_D, )
 __BUILD_BLAST_CACHE_RANGE(inv_s, scache, Hit_Invalidate_SD, )

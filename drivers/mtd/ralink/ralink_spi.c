@@ -305,6 +305,7 @@ static int spic_busy_wait(void)
  * @return: if write_onlu, -1 means write fail, or return writing counter.
  * @return: if read, -1 means read fail, or return reading counter.
  */
+#ifndef COMMAND_MODE
 static int spic_transfer(const u8 *cmd, int n_cmd, u8 *buf, int n_buf, int flag)
 {
 	int retval = -1;
@@ -375,6 +376,7 @@ static int spic_write(const u8 *cmd, size_t n_cmd, const u8 *txbuf, size_t n_tx)
 {
 	return spic_transfer(cmd, n_cmd, (u8 *)txbuf, n_tx, SPIC_WRITE_BYTES);
 }
+#endif
 
 int spic_init(void)
 {
@@ -556,7 +558,7 @@ static int raspi_cmd(const u8 cmd, const u32 addr, const u8 mode, u8 *buf, const
 			return -1;
 		}
 
-		count = min(SPI_FIFO_SIZE, n_buf);
+		count = min((unsigned int)SPI_FIFO_SIZE, (unsigned int)n_buf);
 		for (retval = 0; retval < n_buf;)
 		{
 			while (count--)
@@ -587,7 +589,8 @@ static int raspi_cmd(const u8 cmd, const u32 addr, const u8 mode, u8 *buf, const
 
 static inline int raspi_write_enable(void);
 
-static int raspi_set_quad()
+#if defined (RD_MODE_QUAD)
+static int raspi_set_quad(void)
 {
 	int retval = 0;
 
@@ -642,6 +645,7 @@ err_end:
 
 	return retval;
 }
+#endif
 #endif // COMMAND_MODE
 
 static int raspi_read_devid(u8 *rxbuf, int n_rx)
@@ -744,7 +748,8 @@ static int raspi_write_sr(u8 *val)
 	return 0;
 }
 
-static int raspi_clear_sr()
+#if 0
+static int raspi_clear_sr(void)
 {
 	u8 code = OPCODE_CLSR;
 
@@ -755,6 +760,7 @@ static int raspi_clear_sr()
 #endif
 	return 0;
 }
+#endif
 
 /*
  * Set write enable latch with Write Enable command.
@@ -765,7 +771,7 @@ static inline int raspi_write_enable(void)
 	u8 code = OPCODE_WREN;
 
 #ifdef COMMAND_MODE
-	raspi_cmd(code, 0, 0, 0, 0, 0, 0);
+	return raspi_cmd(code, 0, 0, 0, 0, 0, 0);
 #else
 	return spic_write(&code, 1, NULL, 0);
 #endif
@@ -776,7 +782,7 @@ static inline int raspi_write_disable(void)
 	u8 code = OPCODE_WRDI;
 
 #ifdef COMMAND_MODE
-	raspi_cmd(code, 0, 0, 0, 0, 0, 0);
+	return raspi_cmd(code, 0, 0, 0, 0, 0, 0);
 #else
 	return spic_write(&code, 1, NULL, 0);
 #endif
@@ -880,6 +886,7 @@ static inline int raspi_unprotect(void)
 		sr = 0;
 		raspi_write_sr(&sr);
 	}
+	return 0;
 }
 
 /*
@@ -1398,9 +1405,9 @@ static int ramtd_write(struct mtd_info *mtd, loff_t to, size_t len,
 #endif
 
 		if (flash->chip->addr4b)
-			retval = raspi_cmd(OPCODE_PP, to, 0, buf, page_size, 0, SPIC_WRITE_BYTES | SPIC_4B_ADDR);
+			retval = raspi_cmd(OPCODE_PP, to, 0,(u8 *)buf, page_size, 0, SPIC_WRITE_BYTES | SPIC_4B_ADDR);
 		else
-			retval = raspi_cmd(OPCODE_PP, to, 0, buf, page_size, 0, SPIC_WRITE_BYTES);
+			retval = raspi_cmd(OPCODE_PP, to, 0,(u8 *)buf, page_size, 0, SPIC_WRITE_BYTES);
 
 		//{
 		//	u32 user;
@@ -1610,12 +1617,12 @@ static struct mtd_info *raspi_probe(struct map_info *map)
 #endif
 
 	printk("%s(%02x %04x) (%d Kbytes)\n", 
-	       chip->name, chip->id, chip->jedec_id, flash->mtd.size / 1024);
+	       chip->name, chip->id, chip->jedec_id, (int)(flash->mtd.size / 1024));
 
 	printk("mtd .name = %s, .size = 0x%.8x (%uM) "
 			".erasesize = 0x%.8x (%uK) .numeraseregions = %d\n",
 		flash->mtd.name,
-		flash->mtd.size, flash->mtd.size / (1024*1024),
+		(unsigned int)flash->mtd.size, (unsigned int)(flash->mtd.size / (1024*1024)),
 		flash->mtd.erasesize, flash->mtd.erasesize / 1024,
 		flash->mtd.numeraseregions);
 
@@ -1624,7 +1631,7 @@ static struct mtd_info *raspi_probe(struct map_info *map)
 			printk("mtd.eraseregions[%d] = { .offset = 0x%.8x, "
 				".erasesize = 0x%.8x (%uK), "
 				".numblocks = %d }\n",
-				i, flash->mtd.eraseregions[i].offset,
+				i, (unsigned int)flash->mtd.eraseregions[i].offset,
 				flash->mtd.eraseregions[i].erasesize,
 				flash->mtd.eraseregions[i].erasesize / 1024,
 				flash->mtd.eraseregions[i].numblocks);

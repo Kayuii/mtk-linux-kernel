@@ -1866,7 +1866,7 @@ static inline int pskb_network_may_pull(struct sk_buff *skb, unsigned int len)
  */
 #ifndef NET_SKB_PAD
 #if defined (CONFIG_PPPOPPTP) || defined (CONFIG_PPPOL2TP)
-#define NET_SKB_PAD             96
+#define NET_SKB_PAD             128
 #define NET_SKB_PAD_ORIG        max(32, L1_CACHE_BYTES)
 #else
 #define NET_SKB_PAD             max(32, L1_CACHE_BYTES)

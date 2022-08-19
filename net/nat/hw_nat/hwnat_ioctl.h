@@ -24,7 +24,7 @@
 
 
 #define HW_NAT_DROP_ENTRY		(0x36)
-
+#define HW_NAT_TBL_CLEAR		(0x37)
 /*HNAT QOS*/
 #if defined (CONFIG_HNAT_V2)
 #define HW_NAT_GET_AC_CNT		(0x09)
@@ -60,6 +60,8 @@
 
 #define HW_NAT_DEVNAME			"hwnat0"
 #define HW_NAT_MAJOR			(220)
+
+extern struct FoeEntry		*PpeFoeBase;
 
 enum hwnat_status {
 	HWNAT_SUCCESS = 0,
@@ -214,7 +216,6 @@ void PpeRstPreAcPtr(void);
 void PpeRstPostAcPtr(void);
 void PpeRstPreMtrPtr(void);
 void PpeRstPostMtrPtr(void);
-
 #endif
-
+int ppe_tbl_clear(void);
 #endif

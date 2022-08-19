@@ -430,6 +430,7 @@ static struct chip_info chips_data [] = {
 	{ "S25FL132K",          0x01, 0x40160140, 64 * 1024, 64,  0 },
 	{ "S25FL032P",          0x01, 0x02154D00, 64 * 1024, 64,  0 },
 	{ "S25FL064P",          0x01, 0x02164D00, 64 * 1024, 128, 0 },
+	{ "S25FL064L",          0x01, 0x60170000, 64 * 1024, 128, 0 },
 	{ "S25FL116K",          0x01, 0x40150140, 64 * 1024, 32,  0 },
 	{ "F25L64QA",           0x8c, 0x41170000, 64 * 1024, 128, 0 }, //ESMT
 	{ "F25L32QA",           0x8c, 0x41168c41, 64 * 1024, 64,  0 }, //ESMT
@@ -612,6 +613,7 @@ RET_MB_TRANS:
 #endif
 	return rc;
 }
+	return 0;
 
 }
 #endif // MORE_BUF_MODE //
@@ -792,8 +794,8 @@ int bbu_spic_trans(const u8 code, const u32 addr, u8 *buf, const size_t n_tx, co
 #if defined (CONFIG_RALINK_MT7621) && defined (CONFIG_FB_MEDIATEK_TRULY)
   spin_unlock(&flash_lock);
 #endif
-	return 0;
 }
+	return 0;
 }
 #endif // BBU_MODE //
 
@@ -1856,13 +1858,13 @@ static struct mtd_info *raspi_probe(struct map_info *map)
 				(int)flash->mtd.eraseregions[i].numblocks);
 
 #if defined (CONFIG_RT2880_ROOTFS_IN_FLASH) && defined (CONFIG_ROOTFS_IN_FLASH_NO_PADDING)
-	offs = MTD_BOOT_PART_SIZE + MTD_CONFIG_PART_SIZE + MTD_FACTORY_PART_SIZE;
+	offs = MTD_BOOT_PART_SIZE + MTD_CONFIG_PART_SIZE + MTD_FACTORY_PART_SIZE + RSA256_SIG_SIZE + PUB_KEY_SIZE;
 	ramtd_read(NULL, offs, sizeof(hdr), (size_t *)&i, (u_char *)(&hdr));
 	if (hdr.ih_ksz != 0) {
 		rt2880_partitions[4].size = ntohl(hdr.ih_ksz);
 		rt2880_partitions[5].size = IMAGE1_SIZE - (MTD_BOOT_PART_SIZE +
 				MTD_CONFIG_PART_SIZE + MTD_FACTORY_PART_SIZE +
-				ntohl(hdr.ih_ksz));
+				+ RSA256_SIG_SIZE + PUB_KEY_SIZE + ntohl(hdr.ih_ksz));
 	}
 #endif
 

@@ -87,7 +87,7 @@ static gfp_t massage_gfp_flags(const struct device *dev, gfp_t gfp)
 	else
 #endif
 #if defined(CONFIG_ZONE_DMA) && !defined(CONFIG_ZONE_DMA32)
-	     if (dev == NULL || dev->coherent_dma_mask < DMA_BIT_MASK(64))
+	if (dev == NULL || dev->coherent_dma_mask <= DMA_BIT_MASK(64))
 		dma_flag = __GFP_DMA;
 	else
 #endif
@@ -130,15 +130,6 @@ static void *mips_dma_alloc_coherent(struct device *dev, size_t size,
 	ret = (void *) __get_free_pages(gfp, get_order(size));
 
 	if (ret) {
-#if (defined (CONFIG_RALINK_MT7621) && (CONFIG_RALINK_RAM_SIZE < 512))
-		/*
-		* Access memory uncached via the shadow above physical memory.
-		* This avoids the uncached access hitting region with CCA
-		* overriden to writethrough.
-		*/		
-		ret += (CONFIG_RALINK_RAM_SIZE * 1024 * 1024);
-#endif
-
 		memset(ret, 0, size);
 		*dma_handle = plat_map_dma_mem(dev, ret, size);
 
@@ -169,15 +160,6 @@ static void mips_dma_free_coherent(struct device *dev, size_t size, void *vaddr,
 
 	if (dma_release_from_coherent(dev, order, vaddr))
 		return;
-
-#if (defined (CONFIG_RALINK_MT7621) && (CONFIG_RALINK_RAM_SIZE < 512))
-   /*
-       * Access memory uncached via the shadow above physical memory.
-       * This avoids the uncached access hitting region with CCA
-       * overriden to writethrough.
-       */
-	addr -= (CONFIG_RALINK_RAM_SIZE * 1024 * 1024);
-#endif
 
 	plat_unmap_dma_mem(dev, dma_handle, size, DMA_BIDIRECTIONAL);
 

@@ -18,4 +18,6 @@
 #endif
 #endif
 
+#define CONFIG_I2S_MMAP
+
 #endif /* MT76XX_MACHINE_H_ */

@@ -2967,7 +2967,10 @@ static int __init mt_msdc_init(void)
 {
     int ret;
 /* +++ by chhung */
-    u32 reg, reg1;
+    u32 reg;
+#if defined (CONFIG_RALINK_MT7628)
+    u32 reg1;
+#endif
 
 #if defined (CONFIG_MTD_ANY_RALINK)
     extern int ra_check_flash_type(void);

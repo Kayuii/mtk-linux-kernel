@@ -55,7 +55,7 @@ rt_dma_prep_dma_memcpy(struct dma_chan *chan, dma_addr_t dest, dma_addr_t src,
 
 #ifdef CONFIG_RT_DMA_HSDMA
   if ((dest & 0x03)!=0){
-  	memcpy(phys_to_virt(dest), phys_to_virt(src), len);	
+ 	memcpy(phys_to_virt(dest), phys_to_virt(src), len);	
 	dma_async_tx_descriptor_init(&rt_chan->txd, chan);
   }
   else{

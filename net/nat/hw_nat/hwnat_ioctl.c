@@ -27,11 +27,7 @@
 unsigned char bind_dir = BIDIRECTION;
 unsigned short lan_vid = CONFIG_RA_HW_NAT_LAN_VLANID;
 unsigned short wan_vid = CONFIG_RA_HW_NAT_WAN_VLANID;
-#if defined (CONFIG_RA_HW_NAT_PPTP_L2TP)
 int DebugLevel = 0;
-#else
-int DebugLevel = 1;
-#endif
 extern unsigned int DebugPPP;
 extern int log_level;
 #if !defined (CONFIG_HNAT_V2)
@@ -180,6 +176,9 @@ HwNatIoctl(struct inode *inode, struct file *filp,
 		foe_mcast_entry_dump();
 		break;
 #endif // CONFIG_PPE_MCAST //
+	case HW_NAT_TBL_CLEAR:
+		ppe_tbl_clear();
+		break;
 	default:
 		break;
 	}
@@ -641,6 +640,19 @@ int PpeSetBindLifetime(uint16_t tcp_life, uint16_t udp_life, uint16_t fin_life)
 
 	/* set Delta time for aging out an bind TCP FOE entry */
 	RegModifyBits(PPE_FOE_BND_AGE1, tcp_life, 0, 16);
+
+	return HWNAT_SUCCESS;
+}
+
+int ppe_tbl_clear(void)
+{
+	u32 foe_tbl_size;
+
+	RegModifyBits(PPE_FOE_CFG, ONLY_FWD_CPU, 4, 2);
+	foe_tbl_size = FOE_4TB_SIZ * sizeof(struct FoeEntry);;
+	memset(PpeFoeBase, 0, foe_tbl_size);
+	PpeSetCacheEbl();	/*clear HWNAT cache */
+	RegModifyBits(PPE_FOE_CFG, FWD_CPU_BUILD_ENTRY, 4, 2);
 
 	return HWNAT_SUCCESS;
 }

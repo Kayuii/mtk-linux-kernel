@@ -41,6 +41,9 @@
 #include <linux/ppp_defs.h>
 #include <linux/pci.h>
 #include <linux/errno.h>
+#include <linux/inetdevice.h>
+#include <net/rtnetlink.h>
+#include <net/netevent.h>
 
 #include "ra_nat.h"
 #include "foe_fdb.h"
@@ -57,7 +60,15 @@
 #include "mtr_policy.h"
 #include "ac_policy.h"
 #endif
+struct timer_list hwnat_clear_entry_timer;
+static void hwnat_clear_entry(unsigned long data)
+{
+	printk("HW_NAT work normally\n");
+	RegModifyBits(PPE_FOE_CFG, FWD_CPU_BUILD_ENTRY, 4, 2);
+	//del_timer_sync(&hwnat_clear_entry_timer);
 
+}
+void foe_clear_entry(struct neighbour *neigh);
 #if defined (CONFIG_RAETH_QDMA) && defined  (CONFIG_PPE_MCAST)
 #include "mcast_tbl.h"
 #endif
@@ -92,6 +103,7 @@ int fast_bind = 0;
 uint8_t hash_cnt = 0;
 #endif
 struct FoeEntry		*PpeFoeBase;
+EXPORT_SYMBOL(PpeFoeBase);
 dma_addr_t		PpePhyFoeBase;
 #if defined (CONFIG_RA_HW_NAT_PACKET_SAMPLING)
 struct PsEntry    *PpePsBase;
@@ -99,6 +111,9 @@ dma_addr_t	  PpePhyPsBase;
 #endif
 struct net_device	*DstPort[MAX_IF_NUM];
 PktParseResult		PpeParseResult;
+#if defined (CONFIG_SUPPORT_WLAN_OPTIMIZE)
+PktRxParseResult	PpeRxParseResult;
+#endif
 #ifdef CONFIG_RA_HW_NAT_ACCNT_MAINTAINER
 struct hwnat_ac_args    ac_info[64]; //1 for LAN, 2 for WAN
 #endif
@@ -191,13 +206,26 @@ static int FoeAllocTbl(uint32_t NumOfEntry)
 	int entry_base = 0;
 	int bad_entry, i, j;
 #endif
+	dma_addr_t PpePhyFoeBase_tmp;
 
 	FoeTblSize = NumOfEntry * sizeof(struct FoeEntry);
 
-	PpeFoeBase = dma_alloc_coherent(NULL, FoeTblSize, &PpePhyFoeBase, GFP_KERNEL);
+	PpePhyFoeBase_tmp = RegRead(PPE_FOE_BASE);
 
-	if(PpeFoeBase == NULL) {
-		return 0;
+	if (PpePhyFoeBase_tmp) {
+		PpePhyFoeBase = PpePhyFoeBase_tmp;
+		PpeFoeBase = ioremap(PpePhyFoeBase_tmp, FoeTblSize);
+		if(PpeFoeBase == NULL) {
+			printk("PpeFoeBase ioremap fail!!!!\n");
+			return 0;
+		}		
+	} else {	
+		PpeFoeBase = dma_alloc_coherent(NULL, FoeTblSize,
+						&PpePhyFoeBase, GFP_KERNEL);
+
+		if(PpeFoeBase == NULL) {
+			return 0;
+		}
 	}
 
 	RegWrite(PPE_FOE_BASE, PpePhyFoeBase);
@@ -397,14 +425,133 @@ uint32_t FoeDumpPkt(struct sk_buff * skb)
 	return 1;
 
 }
+#if defined (CONFIG_SUPPORT_WLAN_OPTIMIZE)
+int getBrLan = 0;
+uint32_t brNetmask;
+uint32_t br0Ip;
+char br0_mac_address[6];
+void get_bridge_info(void)
+{
+	struct net_device *br0_dev; 
+	struct in_device *br0_in_dev;
+	
+	br0_dev = dev_get_by_name_rcu(&init_net,"br0"); 
+	br0_in_dev = in_dev_get(br0_dev);
+	brNetmask = ntohl(br0_in_dev->ifa_list->ifa_mask);
+	br0Ip = ntohl(br0_in_dev->ifa_list->ifa_address);
+	//memcpy(&br0_mac_address,br0_dev->dev_addr,6);
 
+	if(br0_dev != NULL) {
+		dev_put(br0_dev);
+		//dev_put(br0_in_dev);
+	} else
+		printk("br0_dev = NULL\n");
+	printk("br0Ip = %x, brNetmask = %x\n", br0Ip, brNetmask);
+	getBrLan = 1;
+	
+}
+int BridgeShortCutTx(struct sk_buff * skb)
+{ 
+	struct iphdr *iph = NULL;
+	uint32_t daddr = 0;
+	uint32_t saddr = 0;
+	u32 eth_type = 0;
+	u32 ppp_tag = 0;
+	struct vlan_hdr *vh = NULL;
+	struct ethhdr *eth = NULL;
+	struct pppoe_hdr *peh = NULL;
+	u8 vlan1_gap = 0;
+	u8 vlan2_gap = 0;
+	u8 pppoe_gap = 0;
+
+#ifdef CONFIG_RAETH_HW_VLAN_TX
+	struct vlan_hdr pseudo_vhdr;
+#endif
+
+	eth = (struct ethhdr *)skb->data;
+	if(is_multicast_ether_addr(&eth->h_dest[0]))
+		return 0;
+	eth_type = eth->h_proto;
+	if ((eth_type == htons(ETH_P_8021Q)) ||
+	    (((eth_type) && 0x00FF) == htons(ETH_P_8021Q)) || vlan_tx_tag_present(skb)) {
+
+#ifdef CONFIG_RAETH_HW_VLAN_TX
+		pseudo_vhdr.h_vlan_TCI = htons(vlan_tx_tag_get(skb));
+		pseudo_vhdr.h_vlan_encapsulated_proto = eth->h_proto;
+		vh = (struct vlan_hdr *)&pseudo_vhdr;
+		vlan1_gap = VLAN_HLEN;
+#else
+		vlan1_gap = VLAN_HLEN;
+		vh = (struct vlan_hdr *)(skb->data + ETH_HLEN);
+#endif
+
+		/* VLAN + PPPoE */
+		if (ntohs(vh->h_vlan_encapsulated_proto) == ETH_P_PPP_SES) {
+			pppoe_gap = 8;
+			eth_type = vh->h_vlan_encapsulated_proto;
+			/* Double VLAN = VLAN + VLAN */
+		} else if ((vh->h_vlan_encapsulated_proto == htons(ETH_P_8021Q)) || 
+			   ((vh->h_vlan_encapsulated_proto) && 0x00FF) == htons(ETH_P_8021Q)) {
+	
+			vlan2_gap = VLAN_HLEN;
+			vh = (struct vlan_hdr *)(skb->data + ETH_HLEN + VLAN_HLEN);
+			/* VLAN + VLAN + PPPoE */
+			if (ntohs(vh->h_vlan_encapsulated_proto) == ETH_P_PPP_SES) {
+				pppoe_gap = 8;
+				eth_type = vh->h_vlan_encapsulated_proto;
+			}else
+				eth_type = vh->h_vlan_encapsulated_proto; 
+		}
+	} else if (ntohs(eth_type) == ETH_P_PPP_SES) {
+		/* PPPoE + IP */
+		pppoe_gap = 8;
+		peh = (struct pppoe_hdr *)(skb->data + ETH_HLEN + vlan1_gap);
+		ppp_tag = peh->tag[0].tag_type;
+	}
+
+	if (getBrLan == 0)
+		get_bridge_info();
+	/* set layer4 start addr */
+	if ((eth_type == htons(ETH_P_IP)) || (eth_type == htons(ETH_P_PPP_SES) && ppp_tag == htons(PPP_IP))) {	
+		iph = (struct iphdr *)(skb->data + ETH_HLEN + vlan1_gap + vlan2_gap + pppoe_gap);
+		daddr = ntohl(iph->daddr);
+		saddr = ntohl(iph->saddr);
+	}
+
+	if (((br0Ip & brNetmask) == (daddr & brNetmask)) && ((daddr & brNetmask) == (saddr & brNetmask))){   
+		return 1;
+	}else 
+		return 0;
+
+}
+
+int BridgeShortCutRx(struct sk_buff * skb)
+{ 
+	struct iphdr *iph = NULL;
+	uint32_t daddr;
+	
+	if (getBrLan == 0)
+		get_bridge_info();
+		
+	iph = (struct iphdr *)(skb->data);
+	daddr = ntohl(iph->daddr);
+		
+	if ((br0Ip & brNetmask) == (daddr & brNetmask))
+		return 1;
+	else 
+		return 0;		
+}
+#endif
 /* push different VID for WiFi pseudo interface or USB external NIC */
 uint32_t PpeExtIfRxHandler(struct sk_buff * skb)
 {
 #if defined  (CONFIG_RA_HW_NAT_WIFI) || defined (CONFIG_RA_HW_NAT_NIC_USB)
 	uint16_t VirIfIdx = 0;
 	struct ethhdr *eth = (struct ethhdr *)LAYER2_HEADER(skb);
-
+#if defined (CONFIG_RA_HW_NAT_WIFI_NEW_ARCH)
+	int i=0;
+	int dev_match = 0;
+#endif
 	/* PPE can only handle IPv4/IPv6/PPP packets */
 	if (((skb->protocol != htons(ETH_P_8021Q)) &&
 	     (skb->protocol != htons(ETH_P_IP)) && (skb->protocol != htons(ETH_P_IPV6)) && 
@@ -557,9 +704,14 @@ uint32_t PpeExtIfRxHandler(struct sk_buff * skb)
 	}
 
 #endif
+
+	LAYER3_HEADER(skb) = skb->data;
+	
+#if defined (CONFIG_SUPPORT_WLAN_OPTIMIZE_RX)
+	//PpeRxParseLayerInfo(skb);
+	if (BridgeShortCutRx(skb)) return 1;//Bridge ==> sw path (rps)
+#endif
 #if defined (CONFIG_RA_HW_NAT_WIFI_NEW_ARCH)
-	int i=0;
-	int dev_match = 0;
 	for (i=0; i<MAX_IF_NUM; i++){
 		if(DstPort[i] == skb->dev){
 			VirIfIdx = i;
@@ -569,14 +721,16 @@ uint32_t PpeExtIfRxHandler(struct sk_buff * skb)
 		}
 	}
 	if (dev_match == 0){
-		printk("%s UnKnown Interface, VirIfIdx=%x\n", __func__, VirIfIdx);
+		if (printk_ratelimit())
+			printk("%s UnKnown Interface, VirIfIdx=%x\n", __func__, VirIfIdx);
+			//kfree_skb(skb);
 		return 1;
 	}
 #endif
+
+	skb_push(skb, ETH_HLEN);	//pointer to layer2 header before calling hard_start_xmit		
 	//push vlan tag to stand for actual incoming interface,
 	//so HNAT module can know the actual incoming interface from vlan id.
-	LAYER3_HEADER(skb) = skb->data;
-	skb_push(skb, ETH_HLEN);	//pointer to layer2 header before calling hard_start_xmit
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
 	skb->vlan_proto= htons(ETH_P_8021Q);
 #ifdef CONFIG_RAETH_HW_VLAN_TX
@@ -770,8 +924,10 @@ int PpeHitBindForceToCpuHandler(struct sk_buff *skb, struct FoeEntry *foe_entry)
 #endif
 	/* interface is unkown */
 	if(skb->dev == NULL) {
-		printk("%s, interface is unkown\n", __func__);
-		return 1;
+		if (printk_ratelimit())
+			printk("%s, interface is unkown\n", __func__);
+		kfree_skb(skb);
+		return 0;			
 	}
 
 	LAYER3_HEADER(skb) = skb->data;
@@ -906,7 +1062,9 @@ int32_t PpeRxHandler(struct sk_buff * skb)
 	struct FoeEntry *foe_entry = &PpeFoeBase[FOE_ENTRY_NUM(skb)];
 
 #if defined (CONFIG_HNAT_V2)
+#if defined (CONFIG_RALINK_MT7620)
 	struct ethhdr *eth = (struct ethhdr *)(skb->data - ETH_HLEN);
+#endif
 #if defined (CONFIG_RAETH_QDMA)
 	struct vlan_ethhdr *veth;
 #endif
@@ -1092,9 +1250,11 @@ int32_t PpeRxHandler(struct sk_buff * skb)
 		}
 	} else if (FOE_AI(skb) == HIT_BIND_KEEPALIVE_DUP_OLD_HDR) {
 		if (DebugLevel >= 3) {
-			printk("Got HIT_BIND_KEEPALIVE_DUP_OLD_HDR packe (hash index=%d)\n", FOE_ENTRY_NUM(skb));
+			printk("Rx : Got HIT_BIND_KEEPALIVE_DUP_OLD_HDR packe (hash index=%d)\n", FOE_ENTRY_NUM(skb));
 		}
+#if defined (CONFIG_RALINK_MT7620)
 		eth->h_source[0] = 0x1; //change to multicast packet, make bridge not learn this packet
+#endif
 #if defined (CONFIG_RA_HW_NAT_PPTP_L2TP) 
 	    if(pptp_fast_path){
 		dev_kfree_skb_any(skb);
@@ -1620,12 +1780,17 @@ static uint16_t PpeGetChkBase(struct iphdr *iph)
 {
 	uint16_t org_chksum = ntohs(iph->check);
 	uint16_t org_tot_len = ntohs(iph->tot_len);
+	uint16_t org_id = ntohs(iph->id);
+	uint16_t chksum_tmp, tot_len_tmp, id_tmp;
 	uint32_t tmp = 0;
 	uint16_t chksum_base = 0;
 
-	tmp = ~(org_chksum) + ~(org_tot_len);
-	tmp = ((tmp >> 16) && 0x7) + (tmp & 0xFFFF);
-	tmp = ((tmp >> 16) && 0x7) + (tmp & 0xFFFF);
+	chksum_tmp = ~(org_chksum);
+	tot_len_tmp = ~(org_tot_len);
+	id_tmp = ~(org_id);
+	tmp = chksum_tmp + tot_len_tmp + id_tmp;
+	tmp = ((tmp >> 16) & 0x7) + (tmp & 0xFFFF);
+	tmp = ((tmp >> 16) & 0x7) + (tmp & 0xFFFF);
 	chksum_base = tmp & 0xFFFF;
 
 	return chksum_base;
@@ -1923,6 +2088,11 @@ static void PpeSetInfoBlk2(struct _info_blk2 *iblk2, uint32_t fpidx, uint32_t po
 #elif defined (CONFIG_RALINK_MT7620)
 	iblk2->fpidx = fpidx;
 #endif
+
+#if !defined (CONFIG_RAETH_QDMA)
+	iblk2->fqos = 0; /* PDMA MODE should not goes to QoS*/
+#endif
+
 	iblk2->port_mg = port_mg;
 	iblk2->port_ag = port_ag;
 }
@@ -2153,6 +2323,11 @@ PpeSetForcePortInfo(struct sk_buff * skb,
 #else
 		PpeSetInfoBlk2(&foe_entry->ipv4_hnapt.iblk2, 0, 0x3F, 0x3F); //0=PDMA
 #endif
+		if (FOE_SP(skb) == 5){ // wifi to wifi not go to pse port6
+			foe_entry->ipv4_hnapt.iblk2.fqos = 0;
+		}else {
+			foe_entry->ipv4_hnapt.iblk2.fqos = 1;
+		}
 
 		if(PpeParseResult.vlan1 == 0)
 		{
@@ -2189,8 +2364,12 @@ PpeSetForcePortInfo(struct sk_buff * skb,
 	    PpeSetInfoBlk2(&foe_entry->ipv6_3t_route.iblk2, 5, 0x3F, 0x3F); //5=QDMA
 #else
 	    PpeSetInfoBlk2(&foe_entry->ipv6_3t_route.iblk2, 0, 0x3F, 0x3F); //0=PDMA
+	    if (FOE_SP(skb) == 5){
+            	foe_entry->ipv6_3t_route.iblk2.fqos = 0; //wifi to wifi not go to pse port6
+	    } else {
+	    	foe_entry->ipv6_3t_route.iblk2.fqos = 1;
+	    }
 #endif
-	    foe_entry->ipv6_3t_route.iblk2.fqos = 1;
 	    if(PpeParseResult.vlan1 == 0)
 	    {
 		    foe_entry->ipv6_3t_route.vlan1 = FOE_ENTRY_NUM(skb);
@@ -2214,6 +2393,7 @@ PpeSetForcePortInfo(struct sk_buff * skb,
 	    }
 #else
 	    PpeSetInfoBlk2(&foe_entry->ipv6_3t_route.iblk2, 0, 0x3F, 0x3F); //0=CPU
+	    foe_entry->ipv6_3t_route.iblk2.fqos = 0; /* PDMA MODE should not goes to QoS*/  //Landen: customer's change
 #endif
 	}
 #endif
@@ -2578,13 +2758,20 @@ uint32_t PpeSetExtIfNum(struct sk_buff * skb, struct FoeEntry * foe_entry)
 #endif // !(CONFIG_RA_HW_NAT_WIFI_NEW_ARCH)
 #if defined  (CONFIG_RA_HW_NAT_WIFI_NEW_ARCH)
 	uint32_t i = 0;
+	int dev_match = 0;
 	for (i=0; i<MAX_IF_NUM; i++){
 		if(DstPort[i] == skb->dev){
 			offset = i;
+			dev_match = 1;
 			if (DebugLevel >= 1) {
 				printk("dev match offset, name=%s ifined=%x\n", skb->dev->name,i);
 			} 
 		}
+	}
+	if (dev_match == 0){
+		if (printk_ratelimit())
+			printk("%s UnKnown Interface, offset =%x\n", __func__, i);
+		return 1;
 	}
 #endif// (CONFIG_RA_HW_NAT_WIFI_NEW_ARCH)
 
@@ -2803,7 +2990,10 @@ int32_t PpeTxHandler(struct sk_buff *skb, int gmac_no)
 	}
 #endif
     if (IS_MAGIC_TAG_VALID(skb) && (FOE_AI(skb) == HIT_UNBIND_RATE_REACH) && (FOE_ALG(skb) == 0) ) {
-
+#if defined (CONFIG_SUPPORT_WLAN_OPTIMIZE_TX)
+	if (strncmp(skb->dev->name, "ra", 2) == 0)
+		if (BridgeShortCutTx(skb)) return 1; ////Bridge ==> sw path (rps)
+#endif
 	/* get start addr for each layer */
 	if (PpeParseLayerInfo(skb)) {
 	    memset(FOE_INFO_START_ADDR(skb), 0, FOE_INFO_LEN);
@@ -2923,7 +3113,7 @@ int32_t PpeTxHandler(struct sk_buff *skb, int gmac_no)
 	    && (FOE_AI(skb) == HIT_BIND_PACKET_SAMPLING)){
 	/* this is duplicate packet in PS function, 
 	 * just drop it */
-	printk("PS drop#%d\n", FOE_ENTRY_NUM(skb));
+	//printk("PS drop#%d\n", FOE_ENTRY_NUM(skb));
 	memset(FOE_INFO_START_ADDR(skb), 0, FOE_INFO_LEN);
 	return 0;
 #endif
@@ -2931,6 +3121,9 @@ int32_t PpeTxHandler(struct sk_buff *skb, int gmac_no)
     } else if (IS_MAGIC_TAG_VALID(skb)
 	    && (FOE_AI(skb) == HIT_BIND_KEEPALIVE_MC_NEW_HDR
 		|| (FOE_AI(skb) == HIT_BIND_KEEPALIVE_DUP_OLD_HDR))) {
+		if (DebugLevel >= 3) {
+			printk("Tx : Got HIT_BIND_KEEPALIVE_DUP_OLD_HDR packe (hash index=%d)\n", FOE_ENTRY_NUM(skb));
+		}
 #else
     } else if (IS_MAGIC_TAG_VALID(skb)
 	    && (FOE_AI(skb) == HIT_BIND_KEEPALIVE)
@@ -3405,6 +3598,7 @@ static void PpeSetHNATProtoType(void)
 #endif
 }
 
+#if(0)
 static void FoeFreeTbl(uint32_t NumOfEntry)
 {
     uint32_t FoeTblSize;
@@ -3413,6 +3607,7 @@ static void FoeFreeTbl(uint32_t NumOfEntry)
     dma_free_coherent(NULL, FoeTblSize, PpeFoeBase, PpePhyFoeBase);
     RegWrite(PPE_FOE_BASE, 0);
 }
+#endif
 
 static int32_t PpeEngStart(void)
 {
@@ -3448,6 +3643,7 @@ static int32_t PpeEngStart(void)
     return 0;
 }
 
+#if(0)
 static int32_t PpeEngStop(void)
 {
     /* Set PPE FOE ENABLE */
@@ -3470,6 +3666,7 @@ static int32_t PpeEngStop(void)
 
     return 0;
 }
+#endif
 
 struct net_device *ra_dev_get_by_name(const char *name)
 {
@@ -4213,7 +4410,91 @@ void foe_ac_update_ebl(int ebl)
     }
 #endif
 }
+void foe_clear_entry(struct neighbour *neigh)
+{
+	int hash_index, clear;
+	struct FoeEntry *entry;
+        u32 *daddr = (u32 *)neigh->primary_key;
+	const u8 *addrtmp;
+	u8 mac0,mac1,mac2,mac3,mac4,mac5;
+	u32 dip;
+	dip = (u32)(*daddr);
+	clear = 0;
+	addrtmp = neigh->ha;
+	mac0 = (u8)(*addrtmp);
+	mac1 = (u8)(*(addrtmp+1));
+	mac2 = (u8)(*(addrtmp+2));
+	mac3 = (u8)(*(addrtmp+3));
+	mac4 = (u8)(*(addrtmp+4));
+	mac5 = (u8)(*(addrtmp+5));
+	
+        for (hash_index = 0; hash_index < FOE_4TB_SIZ; hash_index++) {
+		entry = &PpeFoeBase[hash_index];
+		if(entry->bfib1.state == BIND) {
+			if (DebugLevel >= 1) {
+				printk("before old mac= %x:%x:%x:%x:%x:%x, new_dip=%x\n",
+					entry->ipv4_hnapt.dmac_hi[3],
+					entry->ipv4_hnapt.dmac_hi[2],
+					entry->ipv4_hnapt.dmac_hi[1],
+					entry->ipv4_hnapt.dmac_hi[0],
+					entry->ipv4_hnapt.dmac_lo[1],
+					entry->ipv4_hnapt.dmac_lo[0], entry->ipv4_hnapt.new_dip);
+			}
+			if (entry->ipv4_hnapt.new_dip == ntohl(dip)) {
+				if ((entry->ipv4_hnapt.dmac_hi[3] != mac0) || 
+				    (entry->ipv4_hnapt.dmac_hi[2] != mac1) || 
+				    (entry->ipv4_hnapt.dmac_hi[1] != mac2) ||
+				    (entry->ipv4_hnapt.dmac_hi[0] != mac3) ||
+				    (entry->ipv4_hnapt.dmac_lo[1] != mac4) ||
+				    (entry->ipv4_hnapt.dmac_lo[0] != mac5)) {
+				    	printk("%s: state=%d\n",__func__,neigh->nud_state);
+				    	RegModifyBits(PPE_FOE_CFG, ONLY_FWD_CPU, 4, 2);
+				    	
+				  	entry->ipv4_hnapt.udib1.state = INVALID;
+					entry->ipv4_hnapt.udib1.time_stamp = RegRead(FOE_TS) & 0xFF;
+					PpeSetCacheEbl();
+					mod_timer(&hwnat_clear_entry_timer, jiffies + 3 * HZ);
+				
+					printk("delete old entry: dip =%x\n", ntohl(dip));
+							
+				    	printk("old mac= %x:%x:%x:%x:%x:%x, dip=%x\n", 
+				    		entry->ipv4_hnapt.dmac_hi[3],
+				    		entry->ipv4_hnapt.dmac_hi[2],
+				    		entry->ipv4_hnapt.dmac_hi[1],
+				    		entry->ipv4_hnapt.dmac_hi[0],
+				    		entry->ipv4_hnapt.dmac_lo[1],
+				    		entry->ipv4_hnapt.dmac_lo[0],
+				    		ntohl(dip));
+				    	printk("new mac= %x:%x:%x:%x:%x:%x, dip=%x\n", mac0, mac1, mac2, mac3, mac4, mac5, ntohl(dip));
 
+				}
+			}
+		}
+	}
+}
+static int wh2_netevent_handler(struct notifier_block *unused,
+                                unsigned long event, void *ptr)
+{
+        struct net_device *dev = NULL;
+        struct neighbour *neigh = NULL;
+        int err = 0;
+
+        switch (event) {
+        case NETEVENT_NEIGH_UPDATE:
+                neigh = ptr;
+                dev = neigh->dev;
+                if (dev)
+			foe_clear_entry(neigh);
+                if (err)
+                        printk("failed to handle neigh update (err %d)\n", err);
+                break;
+        }
+
+        return NOTIFY_DONE;
+}
+static struct notifier_block Hnat_netevent_nb __read_mostly = {
+        .notifier_call = wh2_netevent_handler,
+};
 /*
  * PPE Enabled: GMAC<->PPE<->CPU
  * PPE Disabled: GMAC<->CPU
@@ -4303,6 +4584,9 @@ static int32_t PpeInitMod(void)
 #if defined (CONFIG_RA_HW_NAT_PPTP_L2TP) 
 	HnatPptpL2tpInit();
 #endif
+	register_netevent_notifier(&Hnat_netevent_nb);
+	init_timer(&hwnat_clear_entry_timer);
+	hwnat_clear_entry_timer.function = hwnat_clear_entry;
 	return 0;
 }
 
@@ -4325,8 +4609,10 @@ static void PpeCleanupMod(void)
     ppe_dev_register_hook = NULL;
     ppe_dev_unregister_hook = NULL;
 #endif
+
     /* Restore PPE related register */
-    PpeEngStop();
+    //PpeEngStop();
+    iounmap(PpeFoeBase);
 
     /* Unregister ioctl handler */
     PpeUnRegIoctlHandler();
@@ -4361,6 +4647,7 @@ static void PpeCleanupMod(void)
 #if defined (CONFIG_RA_HW_NAT_PPTP_L2TP) 
 	HnatPptpL2tpClean();
 #endif
+    unregister_netevent_notifier(&Hnat_netevent_nb);
 }
 
 module_init(PpeInitMod);

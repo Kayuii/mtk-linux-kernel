@@ -109,7 +109,6 @@ extern int rx_calc_idx1;
 #endif
 #endif
 #ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-extern int rx_calc_idx0;
 static unsigned long tx_cpu_owner_idx0=0;
 #endif
 extern unsigned long tx_ring_full;
@@ -180,14 +179,14 @@ bool fq_qdma_init(struct net_device *dev)
 	unsigned int phy_free_page_head;
 	int i;
     
-	free_head = pci_alloc_consistent(NULL, NUM_QDMA_PAGE * sizeof(struct QDMA_txdesc), &phy_free_head);
+	free_head = dma_alloc_coherent(dev->dev.parent, NUM_QDMA_PAGE * sizeof(struct QDMA_txdesc), &phy_free_head, GFP_KERNEL);
 	if (unlikely(free_head == NULL)){
 		printk(KERN_ERR "QDMA FQ decriptor not available...\n");
 		return 0;
 	}
 	memset(free_head, 0x0, sizeof(struct QDMA_txdesc) * NUM_QDMA_PAGE);
 
-	free_page_head = pci_alloc_consistent(NULL, NUM_QDMA_PAGE * QDMA_PAGE_SIZE, &phy_free_page_head);
+	free_head = dma_alloc_coherent(dev->dev.parent, NUM_QDMA_PAGE * QDMA_PAGE_SIZE, &phy_free_page_head, GFP_KERNEL);
 	if (unlikely(free_page_head == NULL)){
 		printk(KERN_ERR "QDMA FQ page not available...\n");
 		return 0;
@@ -305,11 +304,7 @@ int fe_dma_init(struct net_device *dev)
 		ei_local->skb_free[i]=0;
 	}
 	ei_local->free_idx =0;
-#if defined (CONFIG_MIPS)
-	ei_local->tx_ring0 = pci_alloc_consistent(NULL, NUM_TX_DESC * sizeof(struct PDMA_txdesc), &ei_local->phy_tx_ring0);
-#else
-	ei_local->tx_ring0 = dma_alloc_coherent(NULL, NUM_TX_DESC * sizeof(struct PDMA_txdesc), &ei_local->phy_tx_ring0, GFP_KERNEL);
-#endif
+	ei_local->tx_ring0 = dma_alloc_coherent(dev->dev.parent, NUM_TX_DESC * sizeof(struct PDMA_txdesc), &ei_local->phy_tx_ring0, GFP_KERNEL);
 	printk("\nphy_tx_ring = 0x%08x, tx_ring = 0x%p\n", ei_local->phy_tx_ring0, ei_local->tx_ring0);
 
 	for (i=0; i < NUM_TX_DESC; i++) {
@@ -319,7 +314,6 @@ int fe_dma_init(struct net_device *dev)
 
 	}
 #endif // CONFIG_RAETH_QOS
-
 #ifdef CONFIG_RAETH_PDMATX_QDMARX	/* QDMA RX */
 
 	fq_qdma_init(dev);
@@ -341,23 +335,35 @@ int fe_dma_init(struct net_device *dev)
 	}
 
 	/* Initial RX Ring 0*/
-	
 #ifdef CONFIG_32B_DESC
 	ei_local->qrx_ring = kmalloc(NUM_QRX_DESC * sizeof(struct PDMA_rxdesc), GFP_KERNEL);
 	ei_local->phy_qrx_ring = virt_to_phys(ei_local->qrx_ring);
 #else
-	ei_local->qrx_ring = pci_alloc_consistent(NULL, NUM_QRX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_qrx_ring);
+	ei_local->qrx_ring = dma_alloc_coherent(dev->dev.parent, NUM_QRX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_qrx_ring, GFP_KERNEL);
 #endif
 	for (i = 0; i < NUM_QRX_DESC; i++) {
 		memset(&ei_local->qrx_ring[i],0,sizeof(struct PDMA_rxdesc));
 		ei_local->qrx_ring[i].rxd_info2.DDONE_bit = 0;
 #if defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
 		ei_local->qrx_ring[i].rxd_info2.LS0 = 0;
+#ifdef USE_BUILD_SKB
+		ei_local->qrx_ring[i].rxd_info2.PLEN0 = SKB_DATA_ALIGN(MAX_RX_LENGTH + NET_IP_ALIGN + NET_SKB_PAD) +
+                   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+#else
 		ei_local->qrx_ring[i].rxd_info2.PLEN0 = MAX_RX_LENGTH;
+#endif
 #else
 		ei_local->qrx_ring[i].rxd_info2.LS0 = 1;
 #endif
-		ei_local->qrx_ring[i].rxd_info1.PDP0 = dma_map_single(NULL, ei_local->netrx0_skbuf[i]->data, MAX_RX_LENGTH, PCI_DMA_FROMDEVICE);
+#ifdef USE_BUILD_SKB
+		ei_local->qrx_ring[i].rxd_info1.PDP0 = dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[0][i] + NET_SKB_PAD, SKB_DATA_ALIGN(MAX_RX_LENGTH + NET_IP_ALIGN + NET_SKB_PAD) + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)), DMA_FROM_DEVICE);
+#else
+		ei_local->qrx_ring[i].rxd_info1.PDP0 = dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[0][i]->data, MAX_RX_LENGTH, DMA_FROM_DEVICE);
+#endif
+		if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->qrx_ring[i].rxd_info1.PDP0))){
+			printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
+			goto no_rx_mem;
+		}
 	}
 	printk("\nphy_qrx_ring = 0x%08x, qrx_ring = 0x%p\n",ei_local->phy_qrx_ring,ei_local->qrx_ring);
 
@@ -373,86 +379,103 @@ int fe_dma_init(struct net_device *dev)
 	sysRegWrite(QRX_MAX_CNT_0,  cpu_to_le32((u32) NUM_QRX_DESC));
 	sysRegWrite(QRX_CRX_IDX_0, cpu_to_le32((u32) (NUM_QRX_DESC - 1)));
 #ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-	rx_calc_idx0 = rx_dma_owner_idx0 =  sysRegRead(QRX_CRX_IDX_0);
+	ei_local->rx_calc_idx[0] = sysRegRead(QRX_CRX_IDX_0);
 #endif
 	sysRegWrite(QDMA_RST_CFG, PST_DRX_IDX0);
 
-        ei_local->rx_ring0 = ei_local->qrx_ring;
+        ei_local->rx_ring[0] = ei_local->qrx_ring;
 
 #else	/* PDMA RX */
 
 	/* Initial RX Ring 0*/
 #ifdef CONFIG_32B_DESC
-    	ei_local->rx_ring0 = kmalloc(NUM_RX_DESC * sizeof(struct PDMA_rxdesc), GFP_KERNEL);
-	ei_local->phy_rx_ring0 = virt_to_phys(ei_local->rx_ring0);
+    	ei_local->rx_ring[0] = kmalloc(NUM_RX_DESC * sizeof(struct PDMA_rxdesc), GFP_KERNEL);
+	ei_local->phy_rx_ring0 = virt_to_phys(ei_local->rx_ring[0]);
 #else
-#if defined (CONFIG_MIPS)
-	ei_local->rx_ring0 = pci_alloc_consistent(NULL, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring0);
-#else	
-	ei_local->rx_ring0 = dma_alloc_coherent(NULL, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring0, GFP_KERNEL);
-#endif
+	ei_local->rx_ring[0] = dma_alloc_coherent(dev->dev.parent, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring0, GFP_KERNEL);
+	printk("\nphy_rx_ring0 = 0x%08x, rx_ring[0] = 0x%p\n",ei_local->phy_rx_ring0,ei_local->rx_ring[0]);
 #endif
 	for (i = 0; i < NUM_RX_DESC; i++) {
-		memset(&ei_local->rx_ring0[i],0,sizeof(struct PDMA_rxdesc));
-	    	ei_local->rx_ring0[i].rxd_info2.DDONE_bit = 0;
+		memset(&ei_local->rx_ring[0][i],0,sizeof(struct PDMA_rxdesc));
+	    	ei_local->rx_ring[0][i].rxd_info2.DDONE_bit = 0;
 #if defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		ei_local->rx_ring0[i].rxd_info2.LS0 = 0;
-		ei_local->rx_ring0[i].rxd_info2.PLEN0 = MAX_RX_LENGTH;
+		ei_local->rx_ring[0][i].rxd_info2.LS0 = 0;
+#ifdef USE_BUILD_SKB
+		ei_local->rx_ring[0][i].rxd_info2.PLEN0 = SKB_DATA_ALIGN(MAX_RX_LENGTH + NET_IP_ALIGN + NET_SKB_PAD) +
+                   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
 #else
-		ei_local->rx_ring0[i].rxd_info2.LS0 = 1;
+		ei_local->rx_ring[0][i].rxd_info2.PLEN0 = MAX_RX_LENGTH;
 #endif
-		ei_local->rx_ring0[i].rxd_info1.PDP0 = dma_map_single(NULL, ei_local->netrx0_skbuf[i]->data, MAX_RX_LENGTH + NET_IP_ALIGN, PCI_DMA_FROMDEVICE);
+#else
+		ei_local->rx_ring[0][i].rxd_info2.LS0 = 1;
+#endif
+#ifdef USE_BUILD_SKB
+		ei_local->rx_ring[0][i].rxd_info1.PDP0 = dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[0][i] + NET_SKB_PAD, SKB_DATA_ALIGN(MAX_RX_LENGTH + NET_IP_ALIGN + NET_SKB_PAD) + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)), DMA_FROM_DEVICE);
+#else
+		ei_local->rx_ring[0][i].rxd_info1.PDP0 = dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[0][i]->data, MAX_RX_LENGTH, DMA_FROM_DEVICE);
+#endif
+		if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->rx_ring[0][i].rxd_info1.PDP0))){
+			printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
+			goto no_rx_mem;
+		}
 	}
-	printk("\nphy_rx_ring0 = 0x%08x, rx_ring0 = 0x%p\n",ei_local->phy_rx_ring0,ei_local->rx_ring0);
+	printk("\nphy_rx_ring0 = 0x%08x, rx_ring[0] = 0x%p\n",ei_local->phy_rx_ring0,ei_local->rx_ring[0]);
 
 #if defined (CONFIG_RAETH_MULTIPLE_RX_RING)
 	/* Initial RX Ring 1*/
 #ifdef CONFIG_32B_DESC
-    	ei_local->rx_ring1 = kmalloc(NUM_RX_DESC * sizeof(struct PDMA_rxdesc), GFP_KERNEL);
-	ei_local->phy_rx_ring1 = virt_to_phys(ei_local->rx_ring1);
+    	ei_local->rx_ring[1] = kmalloc(NUM_RX_DESC * sizeof(struct PDMA_rxdesc), GFP_KERNEL);
+	ei_local->phy_rx_ring1 = virt_to_phys(ei_local->rx_ring[1]);
 #else
-#if defined (CONFIG_MIPS)
-	ei_local->rx_ring1 = pci_alloc_consistent(NULL, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring1);
-#else
-	ei_local->rx_ring1 = dma_alloc_coherent(NULL, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring1, GFP_KERNEL);
-
-#endif
+	ei_local->rx_ring[1] = dma_alloc_coherent(dev->dev.parent, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring1, GFP_KERNEL);
 #endif
 	for (i = 0; i < NUM_RX_DESC; i++) {
-		memset(&ei_local->rx_ring1[i],0,sizeof(struct PDMA_rxdesc));
-	    	ei_local->rx_ring1[i].rxd_info2.DDONE_bit = 0;
+		memset(&ei_local->rx_ring[1][i],0,sizeof(struct PDMA_rxdesc));
+	    	ei_local->rx_ring[1][i].rxd_info2.DDONE_bit = 0;
 #if defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		ei_local->rx_ring1[i].rxd_info2.LS0 = 0;
-		ei_local->rx_ring1[i].rxd_info2.PLEN0 = MAX_RX_LENGTH;
+		ei_local->rx_ring[1][i].rxd_info2.LS0 = 0;
+		ei_local->rx_ring[1][i].rxd_info2.PLEN0 = MAX_RX_LENGTH;
 #else
-		ei_local->rx_ring1[i].rxd_info2.LS0 = 1;
+		ei_local->rx_ring[1][i].rxd_info2.LS0 = 1;
 #endif
-		ei_local->rx_ring1[i].rxd_info1.PDP0 = dma_map_single(NULL, ei_local->netrx1_skbuf[i]->data, MAX_RX_LENGTH + NET_IP_ALIGN, PCI_DMA_FROMDEVICE);
+		ei_local->rx_ring[1][i].rxd_info1.PDP0 = dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[1][i]->data, MAX_RX_LENGTH, DMA_FROM_DEVICE);
+		if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->rx_ring[1][i].rxd_info1.PDP0))){
+			printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
+			goto no_rx_mem;
+		}
 	}
-	printk("\nphy_rx_ring1 = 0x%08x, rx_ring1 = 0x%p\n",ei_local->phy_rx_ring1,ei_local->rx_ring1);
-#if defined(CONFIG_ARCH_MT7623)
+	printk("\nphy_rx_ring1 = 0x%08x, rx_ring[1] = 0x%p\n",ei_local->phy_rx_ring1,ei_local->rx_ring[1]);
+#if defined(CONFIG_ARCH_MT7623) || defined (CONFIG_ARCH_MT7622)
     /* Initial RX Ring 2*/
-    ei_local->rx_ring2 = pci_alloc_consistent(NULL, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring2);
+    ei_local->rx_ring[2] = dma_alloc_coherent(dev->dev.parent, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring2, GFP_KERNEL);
     for (i = 0; i < NUM_RX_DESC; i++) {
-        memset(&ei_local->rx_ring2[i],0,sizeof(struct PDMA_rxdesc));
-        ei_local->rx_ring2[i].rxd_info2.DDONE_bit = 0;
-        ei_local->rx_ring2[i].rxd_info2.LS0 = 0;
-        ei_local->rx_ring2[i].rxd_info2.PLEN0 = SET_ADMA_RX_LEN0(MAX_RX_LENGTH);
-        ei_local->rx_ring2[i].rxd_info2.PLEN1 = SET_ADMA_RX_LEN1(MAX_RX_LENGTH >> 14);
-        ei_local->rx_ring2[i].rxd_info1.PDP0 = dma_map_single(NULL, ei_local->netrx2_skbuf[i]->data, MAX_RX_LENGTH + NET_IP_ALIGN, PCI_DMA_FROMDEVICE);
-    }
-    printk("\nphy_rx_ring2 = 0x%08x, rx_ring2 = 0x%p\n",ei_local->phy_rx_ring2,ei_local->rx_ring2);
-    /* Initial RX Ring 3*/
-	ei_local->rx_ring3 = pci_alloc_consistent(NULL, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring3);
-	for (i = 0; i < NUM_RX_DESC; i++) {
-		memset(&ei_local->rx_ring3[i],0,sizeof(struct PDMA_rxdesc));
-    	ei_local->rx_ring3[i].rxd_info2.DDONE_bit = 0;
-        ei_local->rx_ring3[i].rxd_info2.LS0 = 0;
-        ei_local->rx_ring3[i].rxd_info2.PLEN0 = SET_ADMA_RX_LEN0(MAX_RX_LENGTH);
-        ei_local->rx_ring3[i].rxd_info2.PLEN1 = SET_ADMA_RX_LEN1(MAX_RX_LENGTH >> 14);
-    	ei_local->rx_ring3[i].rxd_info1.PDP0 = dma_map_single(NULL, ei_local->netrx3_skbuf[i]->data, MAX_RX_LENGTH + NET_IP_ALIGN, PCI_DMA_FROMDEVICE);
+        memset(&ei_local->rx_ring[2][i],0,sizeof(struct PDMA_rxdesc));
+        ei_local->rx_ring[2][i].rxd_info2.DDONE_bit = 0;
+        ei_local->rx_ring[2][i].rxd_info2.LS0 = 0;
+        ei_local->rx_ring[2][i].rxd_info2.PLEN0 = SET_ADMA_RX_LEN0(MAX_RX_LENGTH);
+        ei_local->rx_ring[2][i].rxd_info2.PLEN1 = SET_ADMA_RX_LEN1(MAX_RX_LENGTH >> 14);
+        ei_local->rx_ring[2][i].rxd_info1.PDP0 = dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[2][i]->data, MAX_RX_LENGTH, DMA_FROM_DEVICE);
+	if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->rx_ring[2][i].rxd_info1.PDP0))){
+		printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
+		goto no_rx_mem;
 	}
-	printk("\nphy_rx_ring3 = 0x%08x, rx_ring3 = 0x%p\n",ei_local->phy_rx_ring3,ei_local->rx_ring3);	
+    }
+    printk("\nphy_rx_ring2 = 0x%08x, rx_ring[2] = 0x%p\n",ei_local->phy_rx_ring2,ei_local->rx_ring[2]);
+    /* Initial RX Ring 3*/
+	ei_local->rx_ring[3] = dma_alloc_coherent(dev->dev.parent, NUM_RX_DESC * sizeof(struct PDMA_rxdesc), &ei_local->phy_rx_ring3, GFP_KERNEL);
+	for (i = 0; i < NUM_RX_DESC; i++) {
+		memset(&ei_local->rx_ring[3][i],0,sizeof(struct PDMA_rxdesc));
+    	ei_local->rx_ring[3][i].rxd_info2.DDONE_bit = 0;
+        ei_local->rx_ring[3][i].rxd_info2.LS0 = 0;
+        ei_local->rx_ring[3][i].rxd_info2.PLEN0 = SET_ADMA_RX_LEN0(MAX_RX_LENGTH);
+        ei_local->rx_ring[3][i].rxd_info2.PLEN1 = SET_ADMA_RX_LEN1(MAX_RX_LENGTH >> 14);
+	ei_local->rx_ring[3][i].rxd_info1.PDP0 = dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[3][i]->data, MAX_RX_LENGTH, DMA_FROM_DEVICE);
+	if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->rx_ring[3][i].rxd_info1.PDP0))){
+		printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
+		goto no_rx_mem;
+	}
+	}
+	printk("\nphy_rx_ring3 = 0x%08x, rx_ring[3] = 0x%p\n",ei_local->phy_rx_ring3,ei_local->rx_ring[3]);	
 #endif  /* CONFIG_ARCH_MT7623 */
 #endif
 
@@ -485,7 +508,7 @@ int fe_dma_init(struct net_device *dev)
 #endif
 
 #ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-	rx_calc_idx0 =  sysRegRead(RX_CALC_IDX0);
+	ei_local->rx_calc_idx[0] =  sysRegRead(RX_CALC_IDX0);
 #endif
 	sysRegWrite(PDMA_RST_CFG, PST_DRX_IDX0);
 #if defined (CONFIG_RAETH_MULTIPLE_RX_RING)
@@ -516,7 +539,10 @@ int fe_dma_init(struct net_device *dev)
 
 	set_fe_dma_glo_cfg();
 
-	return 1;
+	return 0;
+
+no_rx_mem:
+	return -ENOMEM;
 }
 
 inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac_no)
@@ -534,7 +560,7 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
         struct tcphdr *th = NULL;
 	struct skb_frag_struct *frag;
 	unsigned int nr_frags = skb_shinfo(skb)->nr_frags;
-	int i=0;
+	int i=0, j=0, unmap_idx=0;
 	unsigned int len, size, offset, frag_txd_num, skb_txd_num ;
 #endif // CONFIG_RAETH_TSO //
 
@@ -544,6 +570,10 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
 
 #ifdef CONFIG_PSEUDO_SUPPORT
 	PSEUDO_ADAPTER *pAd;
+#endif
+
+#if defined (CONFIG_RAETH_TSO)
+	unsigned long	tx_owner_start_idx = tx_cpu_owner_idx0;
 #endif
 
 	while(ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.DDONE_bit == 0)
@@ -633,9 +663,19 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
 #endif
 
 #else
-	ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0 = virt_to_phys(skb->data);
-	ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.SDL0 = (length - skb->data_len);
-	ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.LS0_bit = nr_frags ? 0:1;
+	len = length - skb->data_len;
+	offset = virt_to_phys(skb->data);
+	ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0 = offset;
+	if (len < MAX_TXD_LEN) {
+		ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.SDL0 = len;
+		ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.LS0_bit = nr_frags ? 0:1;
+		len = 0;
+	}else {
+		ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.SDL0 = MAX_TXD_LEN;
+		ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.LS0_bit = 0;
+		len -= MAX_TXD_LEN;
+		offset += MAX_TXD_LEN;
+	}
 #if defined (CONFIG_RALINK_MT7620)
 	ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info4.FP_BMAP = 0;
 #elif defined (CONFIG_RALINK_MT7621) || defined (CONFIG_ARCH_MT7623)
@@ -695,6 +735,63 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
 
 	skb_txd_num = 1;
 
+	if (len > 0) {
+		frag_txd_num = cal_frag_txd_num(len);
+
+		while (frag_txd_num > 0) {
+			if(len < MAX_TXD_LEN)
+				size = len;
+			else
+				size = MAX_TXD_LEN;
+			if(skb_txd_num%2 == 0) {
+				tx_cpu_owner_idx0 = (tx_cpu_owner_idx0+1) % NUM_TX_DESC;
+
+				while(ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.DDONE_bit == 0)
+				{
+#ifdef config_pseudo_support
+					if (gmac_no == 2) {
+						if (ei_local->pseudodev != null) {
+							pad = netdev_priv(ei_local->pseudodev);
+							pad->stat.tx_errors++;
+						}
+					} else
+#endif
+						ei_local->stat.tx_errors++;
+				}
+
+				ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0 = offset;
+				if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0)))
+				{
+					printk(KERN_ERR "[%s]dma_map_page() failed...\n", __func__);
+					goto err_dma;
+				}
+
+				ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.SDL0 = size;
+				if( ((nr_frags == 0)) && (frag_txd_num == 1))
+					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.LS0_bit = 1;
+				else
+					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.LS0_bit = 0;
+				ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.DDONE_bit = 0;
+			}else {
+				ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info3.SDP1 = offset;
+				if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0)))
+				{
+					printk(KERN_ERR "[%s]dma_map_page() failed...\n", __func__);
+					goto err_dma;
+				}
+				ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.SDL1 = size;
+				if( ((nr_frags == 0)) && (frag_txd_num == 1))
+					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.LS1_bit = 1;
+				else
+					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.LS1_bit = 0;
+			}
+			offset += size;
+			len -= size;
+			frag_txd_num--;
+			skb_txd_num++;
+		}
+
+	}
 	if(nr_frags > 0) {
 
 		for(i=0;i<nr_frags;i++) {
@@ -727,8 +824,14 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,2,0)					
 					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0 = pci_map_page(NULL, frag->page, offset, size, PCI_DMA_TODEVICE);
 #else
-					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0 = pci_map_page(NULL, frag->page.p, offset, size, PCI_DMA_TODEVICE);
+					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0 = dma_map_page(dev->dev.parent, frag->page.p, offset, size, DMA_TO_DEVICE);
 #endif
+					if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0)))
+					{
+						printk(KERN_ERR "[%s]dma_map_page() failed...\n", __func__);
+						goto err_dma;
+					}
+
 					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.SDL0 = size;
 
 					if( (i==(nr_frags-1)) && (frag_txd_num == 1))
@@ -740,9 +843,13 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,2,0)					
 					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info3.SDP1 = pci_map_page(NULL, frag->page, offset, size, PCI_DMA_TODEVICE);
 #else
-					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info3.SDP1 = pci_map_page(NULL, frag->page.p, offset, size, PCI_DMA_TODEVICE);
-
+					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info3.SDP1 = dma_map_page(dev->dev.parent, frag->page.p, offset, size, DMA_TO_DEVICE);
 #endif
+					if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info1.SDP0)))
+					{
+						printk(KERN_ERR "[%s]dma_map_page() failed...\n", __func__);
+						goto err_dma;
+					}
 					ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.SDL1 = size;
 					if( (i==(nr_frags-1)) && (frag_txd_num == 1))
 						ei_local->tx_ring0[tx_cpu_owner_idx0].txd_info2.LS1_bit = 1;
@@ -786,7 +893,7 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
 #if defined (CONFIG_MIPS)
 			dma_cache_sync(NULL, th, sizeof(struct tcphdr), DMA_TO_DEVICE);
 #else
-			dma_sync_single_for_device(NULL, virt_to_phys(th), sizeof(struct tcphdr), DMA_TO_DEVICE);
+			dma_sync_single_for_device(dev->dev.parent, virt_to_phys(th), sizeof(struct tcphdr), DMA_TO_DEVICE);
 #endif
 		} 
 	    
@@ -803,7 +910,7 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
 #if defined (CONFIG_MIPS)
 			dma_cache_sync(NULL, th, sizeof(struct tcphdr), DMA_TO_DEVICE);
 #else
-			dma_sync_single_for_device(NULL, virt_to_phys(th), sizeof(struct tcphdr), DMA_TO_DEVICE);
+			dma_sync_single_for_device(dev->dev.parent, virt_to_phys(th), sizeof(struct tcphdr), DMA_TO_DEVICE);
 #endif
 		}
 #endif // CONFIG_RAETH_TSOV6 //
@@ -859,12 +966,55 @@ inline int rt2880_eth_send(struct net_device* dev, struct sk_buff *skb, int gmac
 #endif
 
 	return length;
+
+#if defined (CONFIG_RAETH_TSO)
+err_dma:
+	/* unmap dma */
+	j = tx_owner_start_idx;
+	unmap_idx = i;
+	for(i = 0; i < unmap_idx; i++) {
+        	frag = &skb_shinfo(skb)->frags[i];
+        	offset = frag->page_offset;
+        	len = frag->size;
+        	frag_txd_num = cal_frag_txd_num(len);
+        
+             	while(frag_txd_num > 0){
+             		if(len < MAX_TXD_LEN)
+             			size = len;
+             		else
+             			size = MAX_TXD_LEN;
+             		if(skb_txd_num%2 == 0) { 
+             			j = (j+1) % NUM_TX_DESC;
+				dma_unmap_page(dev->dev.parent, 
+					ei_local->tx_ring0[j].txd_info1.SDP0, 
+					ei_local->tx_ring0[j].txd_info2.SDL0, 
+					DMA_TO_DEVICE);
+				/* reinit txd */
+     				ei_local->tx_ring0[j].txd_info2.LS0_bit = 1;
+             			ei_local->tx_ring0[j].txd_info2.DDONE_bit = 1;
+				wmb();
+             		}else {
+				dma_unmap_page(dev->dev.parent, 
+					ei_local->tx_ring0[j].txd_info3.SDP1, 
+					ei_local->tx_ring0[j].txd_info2.SDL1, 
+					DMA_TO_DEVICE);
+				/* reinit txd */
+     				ei_local->tx_ring0[j].txd_info2.LS1_bit = 1;
+				wmb();
+             		}
+             		offset += size;
+             		len -= size;
+             		frag_txd_num--;
+             		skb_txd_num++;
+             	}
+	}	
+#endif
+	return -1;
 }
 
 int ei_start_xmit(struct sk_buff* skb, struct net_device *dev, int gmac_no)
 {
 	END_DEVICE *ei_local = netdev_priv(dev);
-	unsigned long flags;
 	unsigned long tx_cpu_owner_idx;
 	unsigned int tx_cpu_owner_idx_next;
 	unsigned int num_of_txd = 0;
@@ -895,7 +1045,8 @@ int ei_start_xmit(struct sk_buff* skb, struct net_device *dev, int gmac_no)
 		if(ra_sw_nat_hook_tx(skb, gmac_no)==1){
 		    //spin_unlock_irqrestore(&ei_local->page_lock, flags);
 		}else{
-		    kfree_skb(skb);
+		    //kfree_skb(skb);
+		    dev_kfree_skb_any(skb);
 		    //spin_unlock_irqrestore(&ei_local->page_lock, flags);
 		    return 0;
 		}
@@ -933,14 +1084,17 @@ int ei_start_xmit(struct sk_buff* skb, struct net_device *dev, int gmac_no)
 #endif
 
 	dev->trans_start = jiffies;	/* save the timestamp */
-	spin_lock_irqsave(&ei_local->page_lock, flags);
+	
 #if defined (CONFIG_MIPS)
 	dma_cache_sync(NULL, skb->data, skb_headlen(skb), DMA_TO_DEVICE);
 #else
-	dma_sync_single_for_device(NULL, virt_to_phys(skb->data), skb->len, DMA_TO_DEVICE);
+	dma_sync_single_for_device(dev->dev.parent, virt_to_phys(skb->data), skb->len, DMA_TO_DEVICE);
 
 #endif
-
+	//spin_lock_irqsave(&ei_local->page_lock, flags);
+	
+	//spin_lock_irqsave(&ei_local->xmit_lock, flags);
+	spin_lock(&ei_local->xmit_lock);
 #ifdef CONFIG_RALINK_VISTA_BASIC
 	veth = (struct vlan_ethhdr *)(skb->data);
 	if (is_switch_175c && veth->h_vlan_proto == __constant_htons(ETH_P_8021Q)) {
@@ -959,8 +1113,10 @@ int ei_start_xmit(struct sk_buff* skb, struct net_device *dev, int gmac_no)
 	  }else{
 	    ei_local->stat.tx_dropped++;
 	    //QWERT kfree_skb(skb);
-		dev_kfree_skb_any(skb);
-	    spin_unlock_irqrestore(&ei_local->page_lock, flags);
+	    dev_kfree_skb_any(skb);
+	   //spin_unlock_irqrestore(&ei_local->page_lock, flags);
+	   //spin_unlock_irqrestore(&ei_local->xmit_lock, flags);
+	   spin_unlock(&ei_local->xmit_lock);
 	    return 0;
 	  }
 	}
@@ -971,24 +1127,33 @@ int ei_start_xmit(struct sk_buff* skb, struct net_device *dev, int gmac_no)
 	tx_cpu_owner_idx = sysRegRead(TX_CTX_IDX0);
 #endif
 #if defined (CONFIG_RAETH_TSO)
-//	num_of_txd = (nr_frags==0) ? 1 : ((nr_frags>>1) + 1);
-//	NumOfTxdUpdate(num_of_txd);
+	num_of_txd += cal_frag_txd_num(skb->len -skb->data_len);
 	if(nr_frags != 0){
 		for(i=0;i<nr_frags;i++) {
 			frag = &skb_shinfo(skb)->frags[i];
 			num_of_txd  += cal_frag_txd_num(frag->size);
 		}
-		num_of_txd = (num_of_txd >> 1) + 1;
-	}else
-		num_of_txd = 1;
-
+	}
+	num_of_txd = (num_of_txd + 1) >> 1;
 #else
 	num_of_txd = 1;
 #endif
 	tx_cpu_owner_idx_next = (tx_cpu_owner_idx + num_of_txd) % NUM_TX_DESC;
 
 	if(((ei_local->skb_free[tx_cpu_owner_idx]) ==0) && (ei_local->skb_free[tx_cpu_owner_idx_next]==0)){
-		rt2880_eth_send(dev, skb, gmac_no);
+		if(rt2880_eth_send(dev, skb, gmac_no) < 0){
+			dev_kfree_skb_any(skb);
+#ifdef CONFIG_PSEUDO_SUPPORT
+			if (gmac_no == 2) {
+				if (ei_local->PseudoDev != NULL) {
+					pAd = netdev_priv(ei_local->PseudoDev);
+					pAd->stat.tx_dropped++;
+				}
+			} else
+#endif
+				ei_local->stat.tx_dropped++;
+			goto tx_err;
+		}
 
 		tx_cpu_owner_idx_next2 = (tx_cpu_owner_idx_next + 1) % NUM_TX_DESC;
 
@@ -1016,7 +1181,9 @@ int ei_start_xmit(struct sk_buff* skb, struct net_device *dev, int gmac_no)
 #endif
 		//QWERT kfree_skb(skb);
 		dev_kfree_skb_any(skb);
-		spin_unlock_irqrestore(&ei_local->page_lock, flags);
+		//spin_unlock_irqrestore(&ei_local->page_lock, flags);
+		//spin_unlock_irqrestore(&ei_local->xmit_lock, flags);
+		spin_unlock(&ei_local->xmit_lock);
 		return 0;
 	}
 
@@ -1030,7 +1197,11 @@ int ei_start_xmit(struct sk_buff* skb, struct net_device *dev, int gmac_no)
 	ei_local->skb_free[tx_cpu_owner_idx] = skb;
 #endif
 #endif
-	spin_unlock_irqrestore(&ei_local->page_lock, flags);
+
+tx_err:
+	//spin_unlock_irqrestore(&ei_local->page_lock, flags);
+	//spin_unlock_irqrestore(&ei_local->xmit_lock, flags);
+	spin_unlock(&ei_local->xmit_lock);
 	return 0;
 }
 

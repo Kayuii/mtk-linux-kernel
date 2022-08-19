@@ -3,6 +3,8 @@
 #
 
 EXTRA_CFLAGS = -Idrivers/mtd
+EXTRA_CFLAGS += -Wall
+EXTRA_CFLAGS += -Werror
 
 obj-$(CONFIG_MTD_NAND)			+= nand.o
 obj-$(CONFIG_MTD_NAND_ECC)		+= nand_ecc.o

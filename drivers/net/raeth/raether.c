@@ -33,7 +33,12 @@
 #else
 #include <linux/libata-compat.h>
 #endif
- 
+
+#if defined(CONFIG_ARCH_MT7623)
+#include <linux/kthread.h>
+#include <linux/delay.h>
+#endif
+
 #include "ra2882ethreg.h"
 #include "raether.h"
 #include "ra_mac.h"
@@ -127,13 +132,11 @@ void setup_fpga_gsw(void);
 
 struct net_device		*dev_raether;
 
-static int rx_dma_owner_idx; 
+static int rx_dma_owner_idx[MAX_RX_RING_NUM];
+#ifndef USE_PREFETCH  
 static int rx_dma_owner_idx0;
-#if defined (CONFIG_RAETH_HW_LRO)
-static int rx_dma_owner_lro1;
-static int rx_dma_owner_lro2;
-static int rx_dma_owner_lro3;
-#elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
+#endif
+#if defined (CONFIG_RAETH_MULTIPLE_RX_RING)
 static int rx_dma_owner_idx1;
 #if defined(CONFIG_ARCH_MT7623)
 static int rx_dma_owner_idx2;
@@ -143,11 +146,9 @@ static int rx_dma_owner_idx3;
 int rx_calc_idx1;
 #endif
 #endif
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-int rx_calc_idx0;
-#endif
+
 static int pending_recv;
-static struct PDMA_rxdesc	*rx_ring;
+
 unsigned long tx_ring_full=0;
 
 #if defined(CONFIG_RALINK_RT6855) || defined(CONFIG_RALINK_RT6855A) || \
@@ -191,8 +192,11 @@ unsigned short p7_tx_byte_cnt = 0;
 #endif
 #endif
 
-
-
+#if defined(CONFIG_ARCH_MT7623)
+#define	FE_RESET_POLLING_MS	(5000)
+static struct task_struct *kreset_task = NULL;
+static unsigned int fe_reset_times = 0;
+#endif
 
 #if defined (CONFIG_ETHTOOL) /*&& defined (CONFIG_RAETH_ROUTER)*/
 #include "ra_ethtool.h"
@@ -710,21 +714,58 @@ rt_get_skb_header(struct sk_buff *skb, void **iphdr, void **tcph,
 }
 #endif // CONFIG_RAETH_LRO //
 
+#ifdef CONFIG_RAETH_HW_LRO
+static int get_hw_lro_rx_ring(END_DEVICE *ei_local,
+				   int rx_idx[])
+{
+	int i;
+
+	for (i = 0; i < MAX_RX_RING_NUM; i++)
+		if (ei_local->rx_ring[i][rx_idx[i]].rxd_info2.DDONE_bit == 1)
+			return i;
+
+	return 0;
+}
+#endif
+
+static inline void __iomem *get_rx_cal_idx_reg(unsigned int rx_ring_no)
+{
+	return (void __iomem *)(RAETH_RX_CALC_IDX0 + (rx_ring_no << 4));
+}
+
+#ifndef USE_PREFETCH
+struct PDMA_rxdesc	*rx_ring;
+#endif
 #ifdef CONFIG_RAETH_NAPI
 static int rt2880_eth_recv(struct net_device* dev, int *work_done, int work_to_do)
 #else
 static int rt2880_eth_recv(struct net_device* dev)
 #endif
 {
-	struct sk_buff	*skb, *rx_skb;
+
+	struct sk_buff	*rx_skb;
+#ifndef USE_BUILD_SKB
+	struct sk_buff	*skb;
+#endif
+
+#ifdef USE_PREFETCH
+	struct PDMA_rxdesc       *rx_ring_next;
+	struct PDMA_rxdesc	*rx_ring;
+#endif
 	unsigned int	length = 0;
 	unsigned long	RxProcessed;
-
+	
 	int bReschedule = 0;
 	END_DEVICE* 	ei_local = netdev_priv(dev);
-#if defined (CONFIG_RAETH_MULTIPLE_RX_RING) || defined (CONFIG_RAETH_HW_LRO)
-	int rx_ring_no=0;
-#endif
+#ifdef USE_BUILD_SKB
+	void *data;
+	unsigned int skb_size;
+	void *rx_data, *rx_data_next;
+#endif	
+	unsigned int map_size;	
+	unsigned int rx_ring_no = 0, rx_ring_no_next = 0;
+	unsigned int rx_dma_owner_index, rx_dma_owner_index_next;
+	void __iomem *rx_calc_idx_reg = (void *)RAETH_RX_CALC_IDX0;
 
 #if defined (CONFIG_RAETH_SPECIAL_TAG)
 	struct vlan_ethhdr *veth=NULL;
@@ -735,35 +776,56 @@ static int rt2880_eth_recv(struct net_device* dev)
 #endif
 
 	RxProcessed = 0;
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-	rx_dma_owner_idx0 = (rx_calc_idx0 + 1) % NUM_RX_DESC;
+                   
+#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR                                        
+#ifdef USE_PREFETCH  
+	rx_dma_owner_idx[0] = (ei_local->rx_calc_idx[0] + 1) % NUM_RX_DESC;
+#ifdef CONFIG_RAETH_HW_LRO
+	rx_dma_owner_idx[1] = (ei_local->rx_calc_idx[1] + 1) % NUM_LRO_RX_DESC;
+	rx_dma_owner_idx[2] = (ei_local->rx_calc_idx[2] + 1) % NUM_LRO_RX_DESC;
+	rx_dma_owner_idx[3] = (ei_local->rx_calc_idx[3] + 1) % NUM_LRO_RX_DESC;
+#endif
 #else
-	rx_dma_owner_idx0 = (sysRegRead(RAETH_RX_CALC_IDX0) + 1) % NUM_RX_DESC;
+	rx_dma_owner_idx0 = (ei_local->rx_calc_idx[0] + 1) % NUM_RX_DESC;
+#endif                 
+#else                                                                                             
+	rx_dma_owner_idx0 = (sysRegRead(rx_calc_idx_reg) + 1) % NUM_RX_DESC;
+#endif              
+                                                                              
+#ifdef CONFIG_RAETH_HW_LRO
+	rx_ring_no =  get_hw_lro_rx_ring(ei_local, rx_dma_owner_idx);
+#else
+	rx_ring_no = 0;
+#ifdef USE_BUILD_SKB
+	skb_size = SKB_DATA_ALIGN(MAX_RX_LENGTH + NET_IP_ALIGN) +
+		   SKB_DATA_ALIGN(NET_SKB_PAD) +
+		   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+	//map_size = MAX_RX_LENGTH;
+#endif
+	map_size = MAX_RX_LENGTH;
+#endif
+	rx_dma_owner_index = rx_dma_owner_idx[rx_ring_no];
+#ifdef USE_BUILD_SKB
+	rx_data = ei_local->netrx_skbuf[rx_ring_no][rx_dma_owner_index];
+#endif
+	rx_calc_idx_reg = get_rx_cal_idx_reg(rx_ring_no);
+
+#ifdef USE_PREFETCH  
+#ifdef USE_BUILD_SKB
+		
+#else
+		rx_skb = ei_local->netrx_skbuf[rx_ring_no][rx_dma_owner_index];
+#endif
+		rx_ring = &ei_local->rx_ring[rx_ring_no][rx_dma_owner_index];
 #endif
 
+
 #if defined (CONFIG_32B_DESC)
-	dma_cache_sync(NULL, &ei_local->rx_ring0[rx_dma_owner_idx0], sizeof(struct PDMA_rxdesc), DMA_FROM_DEVICE);
+	dma_cache_sync(NULL, &ei_local->rx_ring[rx_ring_no][rx_dma_owner_idx0], sizeof(struct PDMA_rxdesc), DMA_FROM_DEVICE);
 #endif
-#if defined (CONFIG_RAETH_HW_LRO)
-	rx_dma_owner_lro1 = (sysRegRead(RX_CALC_IDX1) + 1) % NUM_LRO_RX_DESC;
-	rx_dma_owner_lro2 = (sysRegRead(RX_CALC_IDX2) + 1) % NUM_LRO_RX_DESC;
-	rx_dma_owner_lro3 = (sysRegRead(RX_CALC_IDX3) + 1) % NUM_LRO_RX_DESC;
-#elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-	rx_dma_owner_idx1 = (rx_calc_idx1 + 1) % NUM_RX_DESC;
-#else
-	rx_dma_owner_idx1 = (sysRegRead(RX_CALC_IDX1) + 1) % NUM_RX_DESC;
-#endif  /* CONFIG_RAETH_RW_PDMAPTR_FROM_VAR */
-#if defined(CONFIG_ARCH_MT7623)
-    rx_dma_owner_idx2 = (sysRegRead(RX_CALC_IDX2) + 1) % NUM_RX_DESC;
-    rx_dma_owner_idx3 = (sysRegRead(RX_CALC_IDX3) + 1) % NUM_RX_DESC;
-#endif
-#if defined (CONFIG_32B_DESC)
-	dma_cache_sync(NULL, &ei_local->rx_ring1[rx_dma_owner_idx1], sizeof(struct PDMA_rxdesc), DMA_FROM_DEVICE);
-#endif
-#endif
+
 	for ( ; ; ) {
-
+		dma_addr_t dma_addr;
 
 #ifdef CONFIG_RAETH_NAPI
                 if(*work_done >= work_to_do)
@@ -778,143 +840,194 @@ static int rt2880_eth_recv(struct net_device* dev)
                 }
 #endif
 
+#ifdef USE_PREFETCH  
+		if (rx_ring->rxd_info2.DDONE_bit == 1)  {
+#else
+		if (ei_local->rx_ring[rx_ring_no][rx_dma_owner_idx0].rxd_info2.DDONE_bit == 1)  {
+#endif			
+#ifndef USE_PREFETCH
+			rx_ring = ei_local->rx_ring[rx_ring_no];
+			rx_dma_owner_idx[rx_ring_no] = rx_dma_owner_idx0;
+#endif
+		} else {
+		    break;
+		}
 
-#if defined (CONFIG_RAETH_HW_LRO)
-		if (ei_local->rx_ring3[rx_dma_owner_lro3].rxd_info2.DDONE_bit == 1)  {
-		    rx_ring = ei_local->rx_ring3;
-		    rx_dma_owner_idx = rx_dma_owner_lro3;
-		//    printk("rx_dma_owner_lro3=%x\n",rx_dma_owner_lro3);
-		    rx_ring_no=3;
-		}
-		else if (ei_local->rx_ring2[rx_dma_owner_lro2].rxd_info2.DDONE_bit == 1)  {
-		    rx_ring = ei_local->rx_ring2;
-		    rx_dma_owner_idx = rx_dma_owner_lro2;
-		//    printk("rx_dma_owner_lro2=%x\n",rx_dma_owner_lro2);
-		    rx_ring_no=2;
-		}
-		else if (ei_local->rx_ring1[rx_dma_owner_lro1].rxd_info2.DDONE_bit == 1)  {
-		    rx_ring = ei_local->rx_ring1;
-		    rx_dma_owner_idx = rx_dma_owner_lro1;
-		//    printk("rx_dma_owner_lro1=%x\n",rx_dma_owner_lro1);
-		    rx_ring_no=1;
-		} 
-		else if (ei_local->rx_ring0[rx_dma_owner_idx0].rxd_info2.DDONE_bit == 1)  {
-		    rx_ring = ei_local->rx_ring0;
-		    rx_dma_owner_idx = rx_dma_owner_idx0;
-		 //   printk("rx_dma_owner_idx0=%x\n",rx_dma_owner_idx0);
-		    rx_ring_no=0;
+#ifdef USE_PREFETCH
+#ifdef CONFIG_RAETH_HW_LRO
+		/* prefetch the next handling RXD */
+		if (rx_ring_no == 0) {
+			rx_dma_owner_idx[rx_ring_no] =
+				(rx_dma_owner_index + 1) % NUM_RX_DESC;
+			skb_size =
+			   SKB_DATA_ALIGN(MAX_RX_LENGTH + NET_IP_ALIGN) +
+			   SKB_DATA_ALIGN(NET_SKB_PAD) +
+			   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+			map_size = MAX_RX_LENGTH;
 		} else {
-		    break;
+			rx_dma_owner_idx[rx_ring_no] =
+				(rx_dma_owner_index + 1) % NUM_LRO_RX_DESC;
+			skb_size =
+			   SKB_DATA_ALIGN(MAX_LRO_RX_LENGTH + NET_IP_ALIGN) +
+			   SKB_DATA_ALIGN(NET_SKB_PAD) +
+			   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+			map_size = MAX_LRO_RX_LENGTH;
 		}
-    #if defined (CONFIG_RAETH_HW_LRO_DBG)
-        HwLroStatsUpdate(rx_ring_no, rx_ring[rx_dma_owner_idx].rxd_info2.LRO_AGG_CNT, \
-            (rx_ring[rx_dma_owner_idx].rxd_info2.PLEN1 << 14) | rx_ring[rx_dma_owner_idx].rxd_info2.PLEN0);
-    #endif
-    #if defined(CONFIG_RAETH_HW_LRO_REASON_DBG)
-        HwLroFlushStatsUpdate(rx_ring_no, rx_ring[rx_dma_owner_idx].rxd_info2.REV);
-    #endif
-#elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
-		if (ei_local->rx_ring1[rx_dma_owner_idx1].rxd_info2.DDONE_bit == 1)  {
-		    rx_ring = ei_local->rx_ring1;
-		    rx_dma_owner_idx = rx_dma_owner_idx1;
-		//    printk("rx_dma_owner_idx1=%x\n",rx_dma_owner_idx1);
-		    rx_ring_no=1;
-		}
-#if defined(CONFIG_ARCH_MT7623)
-        else if (ei_local->rx_ring2[rx_dma_owner_idx2].rxd_info2.DDONE_bit == 1)  {
-            rx_ring = ei_local->rx_ring2;
-            rx_dma_owner_idx = rx_dma_owner_idx2;
-        //    printk("rx_dma_owner_idx2=%x\n",rx_dma_owner_idx2);
-            rx_ring_no=2;
-        }
-        else if (ei_local->rx_ring3[rx_dma_owner_idx3].rxd_info2.DDONE_bit == 1)  {
-		    rx_ring = ei_local->rx_ring3;
-		    rx_dma_owner_idx = rx_dma_owner_idx3;
-		//    printk("rx_dma_owner_idx3=%x\n",rx_dma_owner_idx3);
-		    rx_ring_no=3;
-		}		
-#endif  /* CONFIG_ARCH_MT7623 */
-        else if (ei_local->rx_ring0[rx_dma_owner_idx0].rxd_info2.DDONE_bit == 1)  {
-		    rx_ring = ei_local->rx_ring0;
-		    rx_dma_owner_idx = rx_dma_owner_idx0;
-		 //   printk("rx_dma_owner_idx0=%x\n",rx_dma_owner_idx0);
-		    rx_ring_no=0;
-		} else {
-		    break;
-		}
+		rx_ring_no_next =  get_hw_lro_rx_ring(ei_local, rx_dma_owner_idx);
+#else
+		rx_dma_owner_idx[rx_ring_no] =
+				(rx_dma_owner_index + 1) % NUM_RX_DESC;
+		rx_ring_no_next = 0;
+#endif
+		rx_dma_owner_index_next = rx_dma_owner_idx[rx_ring_no_next];
+		rx_ring_next = &ei_local->rx_ring[rx_ring_no_next][rx_dma_owner_index_next];
+#ifdef USE_BUILD_SKB
+		rx_data_next = ei_local->netrx_skbuf[rx_ring_no_next][rx_dma_owner_index_next];
+#endif
+		prefetch(rx_ring_next);
+#endif		
+
+		/* We have to check the free memory size is big enough
+		 * before pass the packet to cpu*/
+#if defined (CONFIG_RAETH_SKB_RECYCLE_2K)
+
+                skb = skbmgr_dev_alloc_skb2k();
 #else
 
-		if (ei_local->rx_ring0[rx_dma_owner_idx0].rxd_info2.DDONE_bit == 1)  {
-		    rx_ring = ei_local->rx_ring0;
-		    rx_dma_owner_idx = rx_dma_owner_idx0;
-		} else {
-		    break;
-		}
+/*
+#ifdef CONFIG_ETH_SLAB_ALLOC_SKB
+		skb = alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN + NET_SKB_PAD, GFP_ATOMIC);
+#else
+    		skb = netdev_alloc_skb(dev, MAX_RX_LENGTH + NET_IP_ALIGN);
 #endif
+*/
+#ifdef USE_BUILD_SKB	
+		data = netdev_alloc_frag(skb_size);
+#else
+    		//skb = netdev_alloc_skb(dev, MAX_RX_LENGTH + NET_IP_ALIGN);
+    		skb = alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN + NET_SKB_PAD, GFP_ATOMIC);
+#endif
+
+#endif
+
+#ifdef USE_BUILD_SKB
+		if (unlikely(data == NULL)) {
+#else
+		if (unlikely(skb == NULL)) {
+#endif
+			printk(KERN_ERR "skb not available...\n");
+#ifdef CONFIG_PSEUDO_SUPPORT
+#ifdef USE_PREFETCH  
+			if (rx_ring->rxd_info4.SP == 2) {
+#else
+			if (rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info4.SP == 2) {
+#endif
+				if (ei_local->PseudoDev != NULL) {
+					pAd = netdev_priv(ei_local->PseudoDev);
+					pAd->stat.rx_dropped++;
+				}
+			} else
+#endif
+				ei_local->stat.rx_dropped++;
+
+			/* NOTE(Nelson): discard the rx packet */
+#ifdef USE_PREFETCH  
+#ifdef CONFIG_RAETH_HW_LRO
+			if (rx_ring_no != 0) {
+				rx_ring->rxd_info2.PLEN0 =
+				    SET_ADMA_RX_LEN0(MAX_LRO_RX_LENGTH);
+				rx_ring->rxd_info2.PLEN1 =
+				    SET_ADMA_RX_LEN1(MAX_LRO_RX_LENGTH >> 14);
+			} else
+#endif
+			rx_ring->rxd_info2.PLEN0 = MAX_RX_LENGTH;
+			rx_ring->rxd_info2.LS0 = 0;
+			rx_ring->rxd_info2.DDONE_bit = 0;
+#else			
+			
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.PLEN0 = MAX_RX_LENGTH;
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.LS0 = 0;
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.DDONE_bit = 0;
+#endif			
+			
+			
+			sysRegWrite(rx_calc_idx_reg, rx_dma_owner_index);
+			wmb();
+		
+#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR   
+			ei_local->rx_calc_idx[rx_ring_no] = rx_dma_owner_index;
+#endif
+
+                        bReschedule = 1;
+			break;
+		}
+#ifdef CONFIG_ETH_SLAB_ALLOC_SKB
+#ifndef USE_BUILD_SKB
+		skb_reserve(skb, NET_SKB_PAD);
+#endif
+#endif
+
+#if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
+		skb_reserve(skb, NET_IP_ALIGN);
+#endif
+
+#ifdef USE_BUILD_SKB		
+		rx_skb = build_skb(rx_data, skb_size);
+		if (unlikely(!rx_skb)) {
+			printk("build_skb failed\n");
+
+#ifdef USE_PREFETCH
+#ifdef CONFIG_RAETH_HW_LRO
+			if (rx_ring_no != 0) {
+				rx_ring->rxd_info2.PLEN0 =
+				    SET_ADMA_RX_LEN0(MAX_LRO_RX_LENGTH);
+				rx_ring->rxd_info2.PLEN1 =
+				    SET_ADMA_RX_LEN1(MAX_LRO_RX_LENGTH >> 14);
+			} else
+#endif
+				rx_ring->rxd_info2.PLEN0 = MAX_RX_LENGTH;
+			rx_ring->rxd_info2.LS0 = 0;
+			rx_ring->rxd_info2.DDONE_bit = 0;
+#else
+			
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.PLEN0 = MAX_RX_LENGTH;
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.LS0 = 0;
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.DDONE_bit = 0;
+#endif
+
+			sysRegWrite(rx_calc_idx_reg, rx_dma_owner_index);
+			wmb();
+
+#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
+			ei_local->rx_calc_idx[rx_ring_no] = rx_dma_owner_index;
+#endif
+
+			bReschedule = 1;
+			break;
+		}
+		skb_reserve(rx_skb, NET_SKB_PAD);
+#else
+		rx_skb = ei_local->netrx_skbuf[rx_ring_no][rx_dma_owner_index];
+		rx_skb->data = ei_local->netrx_skbuf[rx_ring_no][rx_dma_owner_index]->data;
+#endif		
 
 #if defined (CONFIG_32B_DESC)
-		prefetch(&rx_ring[(rx_dma_owner_idx + 1) % NUM_RX_DESC]);
+		prefetch(&rx_ring[(rx_dma_owner_idx[rx_ring_no] + 1) % NUM_RX_DESC]);
 #endif
 		/* skb processing */
-#if defined (CONFIG_RAETH_HW_LRO)
-        length = (rx_ring[rx_dma_owner_idx].rxd_info2.PLEN1 << 14) | rx_ring[rx_dma_owner_idx].rxd_info2.PLEN0;
-#else
-		length = rx_ring[rx_dma_owner_idx].rxd_info2.PLEN0;
-#endif  /* CONFIG_RAETH_HW_LRO */
 
-#if defined (CONFIG_ARCH_MT7623)
-		dma_unmap_single(NULL, rx_ring[rx_dma_owner_idx].rxd_info1.PDP0, length, DMA_FROM_DEVICE);
+#ifdef USE_PREFETCH
+#ifdef CONFIG_RAETH_HW_LRO
+		length = (rx_ring->rxd_info2.PLEN1 << 14) |
+			  rx_ring->rxd_info2.PLEN0;
+#else
+		length = rx_ring->rxd_info2.PLEN0;
+#endif
+		prefetch(rx_skb->data + NET_IP_ALIGN);
+#else
+		length = rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.PLEN0;
 #endif
 
-#if defined (CONFIG_RAETH_HW_LRO)
-		if(rx_ring_no==3) {
-		    rx_skb = ei_local->netrx3_skbuf[rx_dma_owner_idx];
-		    rx_skb->data = ei_local->netrx3_skbuf[rx_dma_owner_idx]->data;
-		}
-		else if(rx_ring_no==2) {
-		    rx_skb = ei_local->netrx2_skbuf[rx_dma_owner_idx];
-		    rx_skb->data = ei_local->netrx2_skbuf[rx_dma_owner_idx]->data;
-		}
-		else if(rx_ring_no==1) {
-		    rx_skb = ei_local->netrx1_skbuf[rx_dma_owner_idx];
-		    rx_skb->data = ei_local->netrx1_skbuf[rx_dma_owner_idx]->data;
-		} 
-		else {
-		    rx_skb = ei_local->netrx0_skbuf[rx_dma_owner_idx];
-		    rx_skb->data = ei_local->netrx0_skbuf[rx_dma_owner_idx]->data;
-		}
-    #if defined(CONFIG_RAETH_PDMA_DVT)
-        raeth_pdma_lro_dvt( rx_ring_no, ei_local, rx_dma_owner_idx );
-    #endif  /* CONFIG_RAETH_PDMA_DVT */
-#elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
-		if(rx_ring_no==1) {
-		    rx_skb = ei_local->netrx1_skbuf[rx_dma_owner_idx];
-		    rx_skb->data = ei_local->netrx1_skbuf[rx_dma_owner_idx]->data;
-		} 
-#if defined(CONFIG_ARCH_MT7623)
-		else if(rx_ring_no==2) {
-		    rx_skb = ei_local->netrx2_skbuf[rx_dma_owner_idx];
-		    rx_skb->data = ei_local->netrx2_skbuf[rx_dma_owner_idx]->data;
-		}
-        else if(rx_ring_no==3) {
-		    rx_skb = ei_local->netrx3_skbuf[rx_dma_owner_idx];
-		    rx_skb->data = ei_local->netrx3_skbuf[rx_dma_owner_idx]->data;
-		}
-#endif  /* CONFIG_ARCH_MT7623 */
-        else {
-		    rx_skb = ei_local->netrx0_skbuf[rx_dma_owner_idx];
-		    rx_skb->data = ei_local->netrx0_skbuf[rx_dma_owner_idx]->data;
-		}
-    #if defined(CONFIG_RAETH_PDMA_DVT)
-        raeth_pdma_lro_dvt( rx_ring_no, ei_local, rx_dma_owner_idx );
-    #endif  /* CONFIG_RAETH_PDMA_DVT */
-#else
-		rx_skb = ei_local->netrx0_skbuf[rx_dma_owner_idx];
-		rx_skb->data = ei_local->netrx0_skbuf[rx_dma_owner_idx]->data;
-    #if defined(CONFIG_RAETH_PDMA_DVT)
-        raeth_pdma_rx_desc_dvt( ei_local, rx_dma_owner_idx0 );
-    #endif  /* CONFIG_RAETH_PDMA_DVT */
-#endif
 		rx_skb->len 	= length;
 /*TODO*/
 #if defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
@@ -923,7 +1036,11 @@ static int rt2880_eth_recv(struct net_device* dev)
 		rx_skb->tail 	= rx_skb->data + length;
 
 #ifdef CONFIG_PSEUDO_SUPPORT
-		if(rx_ring[rx_dma_owner_idx].rxd_info4.SP == 2) {
+#ifdef USE_PREFETCH  
+			if (rx_ring->rxd_info4.SP == 2) {
+#else
+			if (rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info4.SP == 2) {
+#endif		  	
 		    if(ei_local->PseudoDev!=NULL) {
 			rx_skb->dev 	  = ei_local->PseudoDev;
 			rx_skb->protocol  = eth_type_trans(rx_skb,ei_local->PseudoDev);
@@ -941,13 +1058,22 @@ static int rt2880_eth_recv(struct net_device* dev)
 
 #ifdef CONFIG_RAETH_CHECKSUM_OFFLOAD
 #if defined (CONFIG_PDMA_NEW)
-		if(rx_ring[rx_dma_owner_idx].rxd_info4.L4VLD) {
+#ifdef USE_PREFETCH  
+		if(rx_ring->rxd_info4.L4VLD) {
+#else
+		if(rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info4.L4VLD) {
+#endif
 			rx_skb->ip_summed = CHECKSUM_UNNECESSARY;
 		}else {
 		    rx_skb->ip_summed = CHECKSUM_NONE;
 		}
 #else
-		if(rx_ring[rx_dma_owner_idx].rxd_info4.IPFVLD_bit) {
+		
+#ifdef USE_PREFETCH  
+		if(rx_ring->rxd_info4.IPFVLD_bit) {
+#else
+		if(rx_ring[rx_dma_owner_idx[rx_ring_no].rxd_info4.IPFVLD_bit) {
+#endif
 			rx_skb->ip_summed = CHECKSUM_UNNECESSARY;
 		}else { 
 		    rx_skb->ip_summed = CHECKSUM_NONE;
@@ -961,38 +1087,31 @@ static int rt2880_eth_recv(struct net_device* dev)
 #if defined (CONFIG_RA_HW_NAT)  || defined (CONFIG_RA_HW_NAT_MODULE)
 		if(ra_sw_nat_hook_rx != NULL) {
 		    FOE_MAGIC_TAG(rx_skb)= FOE_MAGIC_GE;
-		    *(uint32_t *)(FOE_INFO_START_ADDR(rx_skb)+2) = *(uint32_t *)&rx_ring[rx_dma_owner_idx].rxd_info4;
+		    *(uint32_t *)(FOE_INFO_START_ADDR(rx_skb)+2) = *(uint32_t *)&rx_ring->rxd_info4;
 		    FOE_ALG(rx_skb) = 0;
 		}
 #endif
 
-		/* We have to check the free memory size is big enough
-		 * before pass the packet to cpu*/
-#if defined (CONFIG_RAETH_SKB_RECYCLE_2K)
-#if defined (CONFIG_RAETH_HW_LRO)
-            if( rx_ring != ei_local->rx_ring0 )
-	            skb = __dev_alloc_skb(ei_local->hw_lro_sdl_size + NET_IP_ALIGN, GFP_ATOMIC);
-            else
-#endif  /* CONFIG_RAETH_HW_LRO */
-                skb = skbmgr_dev_alloc_skb2k();
+#ifdef USE_BUILD_SKB
+			dma_addr = dma_map_single(dev->dev.parent, 
+					  data + NET_SKB_PAD, 
+					  map_size, 
+					  DMA_FROM_DEVICE);
 #else
-#if defined (CONFIG_RAETH_HW_LRO)
-        if( rx_ring != ei_local->rx_ring0 )
-            skb = __dev_alloc_skb(ei_local->hw_lro_sdl_size + NET_IP_ALIGN, GFP_ATOMIC);
-        else
-#endif  /* CONFIG_RAETH_HW_LRO */
-#ifdef CONFIG_ETH_SLAB_ALLOC_SKB
-		skb = alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN, GFP_ATOMIC);
-#else
-    		skb = __dev_alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN, GFP_ATOMIC);
+			dma_addr = dma_map_single(dev->dev.parent, 
+						  skb->data, 
+						  map_size, 
+						  DMA_FROM_DEVICE);
 #endif
-#endif
+		if (unlikely(dma_mapping_error(dev->dev.parent, dma_addr))) {
+			printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
 
-		if (unlikely(skb == NULL))
-		{
-			printk(KERN_ERR "skb not available...\n");
 #ifdef CONFIG_PSEUDO_SUPPORT
-			if (rx_ring[rx_dma_owner_idx].rxd_info4.SP == 2) {
+#ifdef USE_PREFETCH  
+			if (rx_ring->rxd_info4.SP == 2) {
+#else
+			if (rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info4.SP == 2) {
+#endif
 				if (ei_local->PseudoDev != NULL) {
 					pAd = netdev_priv(ei_local->PseudoDev);
 					pAd->stat.rx_dropped++;
@@ -1001,25 +1120,46 @@ static int rt2880_eth_recv(struct net_device* dev)
 #endif
 				ei_local->stat.rx_dropped++;
 
-			/* NOTE(Nelson): discard the rx packet */
-#if defined (CONFIG_RAETH_HW_LRO)
-			if( rx_ring != ei_local->rx_ring0 ){
-			    rx_ring[rx_dma_owner_idx].rxd_info2.PLEN0 = SET_ADMA_RX_LEN0(ei_local->hw_lro_sdl_size);
-			    rx_ring[rx_dma_owner_idx].rxd_info2.PLEN1 = SET_ADMA_RX_LEN1(ei_local->hw_lro_sdl_size >> 14);
-			}
-			else
+#ifdef USE_BUILD_SKB
+			put_page(virt_to_head_page(data));
+#else
+			dev_kfree_skb_any(skb);
 #endif
-				rx_ring[rx_dma_owner_idx].rxd_info2.PLEN0 = MAX_RX_LENGTH;
-			rx_ring[rx_dma_owner_idx].rxd_info2.LS0 = 0;
-			rx_ring[rx_dma_owner_idx].rxd_info2.DDONE_bit = 0;
-			sysRegWrite(RAETH_RX_CALC_IDX0, rx_dma_owner_idx);
+			
+			/* NOTE(Nelson): discard the rx packet */
+/*
+
+*/
+#ifdef USE_PREFETCH 
+#ifdef CONFIG_RAETH_HW_LRO
+			if (rx_ring_no != 0) {
+				rx_ring->rxd_info2.PLEN0 =
+				    SET_ADMA_RX_LEN0(MAX_LRO_RX_LENGTH);
+				rx_ring->rxd_info2.PLEN1 =
+				    SET_ADMA_RX_LEN1(MAX_LRO_RX_LENGTH >> 14);
+			} else
+#endif
+				rx_ring->rxd_info2.PLEN0 = MAX_RX_LENGTH;
+			rx_ring->rxd_info2.LS0 = 0;
+			rx_ring->rxd_info2.DDONE_bit = 0;
+#else
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.PLEN0 = MAX_RX_LENGTH;
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.LS0 = 0;
+			rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.DDONE_bit = 0;
+#endif
+			sysRegWrite(rx_calc_idx_reg, rx_dma_owner_index);
 			wmb();
-		
-                        bReschedule = 1;
+
+			bReschedule = 1;
 			break;
 		}
-#if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		skb_reserve(skb, NET_IP_ALIGN);
+		//printk("**rx_dma_owner_idx = %x, length=%x\n", rx_dma_owner_idx, length);
+#if defined(CONFIG_ARCH_MT7623) || defined (CONFIG_ARCH_MT7622)
+#ifdef USE_PREFETCH  
+	dma_unmap_single(dev->dev.parent, rx_ring->rxd_info1.PDP0, length, DMA_FROM_DEVICE);
+#else
+	dma_unmap_single(dev->dev.parent, rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info1.PDP0, length, DMA_FROM_DEVICE);
+#endif	
 #endif
 
 #if defined (CONFIG_RAETH_SPECIAL_TAG)
@@ -1042,6 +1182,10 @@ static int rt2880_eth_recv(struct net_device* dev)
 		}
 #endif
 
+#if defined(CONFIG_RAETH_TSO_DVT)
+	raeth_tso_dvt(rx_skb);
+#endif
+
 /* ra_sw_nat_hook_rx return 1 --> continue
  * ra_sw_nat_hook_rx return 0 --> FWD & without netif_rx
  */
@@ -1060,8 +1204,15 @@ static int rt2880_eth_recv(struct net_device* dev)
                 netif_receive_skb(rx_skb);
 #else
 #ifdef CONFIG_RAETH_HW_VLAN_RX
-	        if(ei_local->vlgrp && rx_ring[rx_dma_owner_idx].rxd_info2.TAG) {
-			vlan_hwaccel_rx(rx_skb, ei_local->vlgrp, rx_ring[rx_dma_owner_idx].rxd_info3.VID);
+	        
+	
+#ifdef USE_PREFETCH  
+		if(ei_local->vlgrp && rx_ring->rxd_info2.TAG) {
+			vlan_hwaccel_rx(rx_skb, ei_local->vlgrp, rx_ring->rxd_info3.VID);
+#else
+		if(ei_local->vlgrp && rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.TAG) {
+			vlan_hwaccel_rx(rx_skb, ei_local->vlgrp, rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info3.VID);
+#endif
 		} else {
 			netif_rx(rx_skb);
 		}
@@ -1077,7 +1228,11 @@ static int rt2880_eth_recv(struct net_device* dev)
          }
 
 #ifdef CONFIG_PSEUDO_SUPPORT
-		if (rx_ring[rx_dma_owner_idx].rxd_info4.SP == 2) {
+#ifdef USE_PREFETCH  
+		if (rx_ring->rxd_info4.SP == 2) {
+#else
+		if (rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info4.SP == 2) {
+#endif
 			if (ei_local->PseudoDev != NULL) {
 				pAd = netdev_priv(ei_local->PseudoDev);
 				pAd->stat.rx_packets++;
@@ -1092,120 +1247,75 @@ static int rt2880_eth_recv(struct net_device* dev)
 
 
 #if defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-#if defined (CONFIG_RAETH_HW_LRO)
-        if( rx_ring != ei_local->rx_ring0 ){
-            rx_ring[rx_dma_owner_idx].rxd_info2.PLEN0 = SET_ADMA_RX_LEN0(ei_local->hw_lro_sdl_size);
-            rx_ring[rx_dma_owner_idx].rxd_info2.PLEN1 = SET_ADMA_RX_LEN1(ei_local->hw_lro_sdl_size >> 14);
-        }
-        else
-#endif  /* CONFIG_RAETH_HW_LRO */
-    		rx_ring[rx_dma_owner_idx].rxd_info2.PLEN0 = MAX_RX_LENGTH;
-		rx_ring[rx_dma_owner_idx].rxd_info2.LS0 = 0;
+    		//rx_ring[rx_dma_owner_idx].rxd_info2.PLEN0 = MAX_RX_LENGTH;
+		//rx_ring[rx_dma_owner_idx].rxd_info2.LS0 = 0;
+#ifdef USE_PREFETCH 
+#ifdef CONFIG_RAETH_HW_LRO
+		if (rx_ring_no != 0) {
+			rx_ring->rxd_info2.PLEN0 =
+			    SET_ADMA_RX_LEN0(MAX_LRO_RX_LENGTH);
+			rx_ring->rxd_info2.PLEN1 =
+			    SET_ADMA_RX_LEN1(MAX_LRO_RX_LENGTH >> 14);
+		} else
 #endif
-#if defined (CONFIG_RAETH_HW_LRO)
-        if( rx_ring != ei_local->rx_ring0 )
-            rx_ring[rx_dma_owner_idx].rxd_info1.PDP0 = dma_map_single(NULL, skb->data, ei_local->hw_lro_sdl_size, PCI_DMA_FROMDEVICE);
-        else
-#endif  /* CONFIG_RAETH_HW_LRO */
-    		rx_ring[rx_dma_owner_idx].rxd_info1.PDP0 = dma_map_single(NULL, skb->data, MAX_RX_LENGTH + NET_IP_ALIGN, PCI_DMA_FROMDEVICE);
-#ifdef CONFIG_32B_DESC
-		dma_cache_sync(NULL, &rx_ring[rx_dma_owner_idx], sizeof(struct PDMA_rxdesc), DMA_TO_DEVICE);
-#endif
-
-		rx_ring[rx_dma_owner_idx].rxd_info2.DDONE_bit = 0;
-		wmb();
-
-		/*  Move point to next RXD which wants to alloc*/
-#if defined (CONFIG_RAETH_HW_LRO)
-		if(rx_ring_no==3) {
-		    ei_local->netrx3_skbuf[rx_dma_owner_idx] = skb;
-		    sysRegWrite(RAETH_RX_CALC_IDX3, rx_dma_owner_idx);
-		}
-		else if(rx_ring_no==2) {
-		    ei_local->netrx2_skbuf[rx_dma_owner_idx] = skb;
-		    sysRegWrite(RAETH_RX_CALC_IDX2, rx_dma_owner_idx);
-		}
-		else if(rx_ring_no==1) {
-		    ei_local->netrx1_skbuf[rx_dma_owner_idx] = skb;
-		    sysRegWrite(RAETH_RX_CALC_IDX1, rx_dma_owner_idx);
-		}
-		else if(rx_ring_no==0) {
-		    ei_local->netrx0_skbuf[rx_dma_owner_idx] = skb;
-		    sysRegWrite(RAETH_RX_CALC_IDX0, rx_dma_owner_idx);
-		}
-#elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
-		if(rx_ring_no==0) {
-		    ei_local->netrx0_skbuf[rx_dma_owner_idx] = skb;
-		    sysRegWrite(RAETH_RX_CALC_IDX0, rx_dma_owner_idx);
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-		    rx_calc_idx0 = rx_dma_owner_idx;
-#endif
-		}
-#if defined(CONFIG_ARCH_MT7623)
-        else if(rx_ring_no==3) {
-		    ei_local->netrx3_skbuf[rx_dma_owner_idx] = skb;
-		    sysRegWrite(RAETH_RX_CALC_IDX3, rx_dma_owner_idx);
-		}
-		else if(rx_ring_no==2) {
-		    ei_local->netrx2_skbuf[rx_dma_owner_idx] = skb;
-		    sysRegWrite(RAETH_RX_CALC_IDX2, rx_dma_owner_idx);
-		}
-#endif  /* CONFIG_ARCH_MT7623 */
-        else {
-		    ei_local->netrx1_skbuf[rx_dma_owner_idx] = skb;
-		    sysRegWrite(RAETH_RX_CALC_IDX1, rx_dma_owner_idx);
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-		    rx_calc_idx1 = rx_dma_owner_idx;
-#endif
-		}
+		rx_ring->rxd_info2.PLEN0 = MAX_RX_LENGTH;
+		rx_ring->rxd_info2.LS0 = 0;
 #else
-		ei_local->netrx0_skbuf[rx_dma_owner_idx] = skb;
-		sysRegWrite(RAETH_RX_CALC_IDX0, rx_dma_owner_idx);
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-		rx_calc_idx0 = rx_dma_owner_idx;
+    		rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.PLEN0 = MAX_RX_LENGTH;
+		rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.LS0 = 0;
 #endif
 #endif
 
-		
+	
+#ifdef USE_PREFETCH 
+	rx_ring->rxd_info1.PDP0 = dma_addr;
+#else
+	rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info1.PDP0 = dma_addr;
+#endif
+#ifdef CONFIG_32B_DESC
+		dma_cache_sync(NULL, &rx_ring[rx_dma_owner_idx[rx_ring_no]], sizeof(struct PDMA_rxdesc), DMA_TO_DEVICE);
+#endif
+		//
+#ifdef USE_PREFETCH 
+		rx_ring->rxd_info2.DDONE_bit = 0;
+#else
+		rx_ring[rx_dma_owner_idx[rx_ring_no]].rxd_info2.DDONE_bit = 0;
+#endif
+		wmb();
+		/*  Move point to next RXD which wants to alloc*/
+
+#ifdef USE_BUILD_SKB
+		ei_local->netrx_skbuf[rx_ring_no][rx_dma_owner_index] = data;
+#else
+		ei_local->netrx_skbuf[rx_ring_no][rx_dma_owner_index] = skb;
+#endif
+		sysRegWrite(rx_calc_idx_reg, rx_dma_owner_index);
+#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
+		ei_local->rx_calc_idx[rx_ring_no] = rx_dma_owner_index;
+#endif
+
 		/* Update to Next packet point that was received.
 		 */
-#if defined (CONFIG_RAETH_HW_LRO)
-		if(rx_ring_no==3)
-			rx_dma_owner_lro3 = (sysRegRead(RAETH_RX_CALC_IDX3) + 1) % NUM_LRO_RX_DESC;
-		else if(rx_ring_no==2)
-			rx_dma_owner_lro2 = (sysRegRead(RAETH_RX_CALC_IDX2) + 1) % NUM_LRO_RX_DESC;
-		else if(rx_ring_no==1)
-			rx_dma_owner_lro1 = (sysRegRead(RAETH_RX_CALC_IDX1) + 1) % NUM_LRO_RX_DESC;
-		else if(rx_ring_no==0)
-			rx_dma_owner_idx0 = (sysRegRead(RAETH_RX_CALC_IDX0) + 1) % NUM_RX_DESC;
-		else {
-		}
-#elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
-		if(rx_ring_no==0) {
+
 #ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-			rx_dma_owner_idx0 = (rx_dma_owner_idx + 1) % NUM_RX_DESC;
+		
+#ifdef USE_PREFETCH  
+
 #else
-			rx_dma_owner_idx0 = (sysRegRead(RAETH_RX_CALC_IDX0) + 1) % NUM_RX_DESC;
+		rx_dma_owner_idx0 = (rx_dma_owner_idx[rx_ring_no] + 1) % NUM_RX_DESC;
 #endif
-#if defined(CONFIG_ARCH_MT7623)
-        }else if(rx_ring_no==3) {
-            rx_dma_owner_idx3 = (sysRegRead(RAETH_RX_CALC_IDX3) + 1) % NUM_RX_DESC;
-        }else if(rx_ring_no==2) {
-            rx_dma_owner_idx2 = (sysRegRead(RAETH_RX_CALC_IDX2) + 1) % NUM_RX_DESC;
-#endif  /* CONFIG_ARCH_MT7623 */
-		}else {
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-			rx_dma_owner_idx1 = (rx_dma_owner_idx + 1) % NUM_RX_DESC;
 #else
-			rx_dma_owner_idx1 = (sysRegRead(RAETH_RX_CALC_IDX1) + 1) % NUM_RX_DESC;
+		rx_dma_owner_idx0 = (sysRegRead(rx_calc_idx_reg) + 1) % NUM_RX_DESC;
 #endif
-		}
-#else
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-		rx_dma_owner_idx0 = (rx_dma_owner_idx + 1) % NUM_RX_DESC;
-#else
-		rx_dma_owner_idx0 = (sysRegRead(RAETH_RX_CALC_IDX0) + 1) % NUM_RX_DESC;
+#ifdef USE_PREFETCH
+		/* use prefetched variable */
+		rx_dma_owner_index = rx_dma_owner_index_next;
+		rx_ring_no = rx_ring_no_next;
+		rx_ring = rx_ring_next;
+#ifdef USE_BUILD_SKB
+		rx_data = rx_data_next;
 #endif
+		rx_calc_idx_reg = get_rx_cal_idx_reg(rx_ring_no);
 #endif
 	}	/* for */
 
@@ -1317,7 +1427,7 @@ void ei_receive(unsigned long unused)  // device structure
 #ifdef CONFIG_RAETH_QDMA
 			reg_int_mask=sysRegRead(QFE_INT_ENABLE);
 #if defined(DELAY_INT)
-			sysRegWrite(QFE_INT_ENABLE, reg_int_mask| RX_DLY_INT);
+			//sysRegWrite(QFE_INT_ENABLE, reg_int_mask | RX_DLY_INT); //no need
 #else
 			sysRegWrite(QFE_INT_ENABLE, (reg_int_mask | RX_DONE_INT0 | RX_DONE_INT1 | RX_DONE_INT2 | RX_DONE_INT3));
 #endif
@@ -1485,7 +1595,7 @@ raeth_clean(struct net_device *netdev, int *budget)
                 return 0;
         }
 
-        return 1;
+        return budget;
 }
 
 #endif
@@ -1698,8 +1808,6 @@ static irqreturn_t ei_tx_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 {
 #if !defined(CONFIG_RAETH_NAPI)
 	unsigned long reg_int_val;
-	unsigned long reg_int_mask=0;
-	unsigned int recv = 0;
 	unsigned int transmit __maybe_unused = 0;
 	unsigned long flags;
 #endif
@@ -2181,14 +2289,19 @@ out:
 
 
 #elif defined (CONFIG_RT_3052_ESW) && (defined(CONFIG_RALINK_MT7621) || defined(CONFIG_ARCH_MT7623))
-
+#if defined(CONFIG_ARCH_MT7623)
+static void esw_interrupt(void)
+#else
 static irqreturn_t esw_interrupt(int irq, void *dev_id)
+#endif
 {
 	unsigned long flags;
 	unsigned int reg_int_val;
-	//struct net_device *dev = (struct net_device *) dev_id;
 	struct net_device *dev = dev_raether;
 	END_DEVICE *ei_local = netdev_priv(dev);
+#if defined(CONFIG_ARCH_MT7623)
+	void *dev_id = NULL;
+#endif
 
 	spin_lock_irqsave(&(ei_local->page_lock), flags);
         mii_mgr_read(31, 0x700c, &reg_int_val);
@@ -2212,7 +2325,10 @@ static irqreturn_t esw_interrupt(int irq, void *dev_id)
 
         mii_mgr_write(31, 0x700c, 0x1f); //ack switch link change
 	spin_unlock_irqrestore(&(ei_local->page_lock), flags);
+
+#if !defined(CONFIG_ARCH_MT7623)
 	return IRQ_HANDLED;
+#endif
 }
 
 #endif
@@ -2642,6 +2758,23 @@ static void ei_vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
 }
 #endif
 
+#ifdef CONFIG_NET_POLL_CONTROLLER
+static void raeth_poll_controller(struct net_device *dev)
+{
+	END_DEVICE *ei_local = netdev_priv(dev);
+	
+#if defined (CONFIG_MIPS)
+	ei_interrupt(dev->irq, dev);
+#else
+	ei_interrupt(ei_local->irq0, dev);
+#if defined (CONFIG_RAETH_TX_RX_INT_SEPARATION)	
+	ei_tx_interrupt(ei_local->irq1, dev);
+	ei_rx_interrupt(ei_local->irq2, dev);
+#endif
+#endif
+}
+#endif
+
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,35)
 static const struct net_device_ops ei_netdev_ops = {
         .ndo_init               = rather_probe,
@@ -2657,7 +2790,7 @@ static const struct net_device_ops ei_netdev_ops = {
 	.ndo_vlan_rx_register   = ei_vlan_rx_register,
 #endif
 #ifdef CONFIG_NET_POLL_CONTROLLER
-        .ndo_poll_controller    = raeth_clean,
+        .ndo_poll_controller    = raeth_poll_controller,
 #endif
 //	.ndo_tx_timeout		= ei_tx_timeout,
 };
@@ -3198,6 +3331,94 @@ void RAETH_Init_PSEUDO(pEND_DEVICE pAd, struct net_device *net_dev)
 }
 #endif
 
+
+#if defined(CONFIG_ARCH_MT7623)
+void fe_do_reset(void)
+{
+	u32 adma_rx_dbg0_r = 0;
+	u32 dbg_rx_curr_state, rx_fifo_wcnt;
+	u32 dbg_cdm_lro_rinf_afifo_rempty, dbg_cdm_eof_rdy_afifo_empty;
+	u32 reg_tmp, loop_count;
+	unsigned long flags;
+	END_DEVICE *ei_local = netdev_priv(dev_raether);
+
+	fe_reset_times++;
+	/* do CDM/PDMA reset */
+	printk("[%s] CDM/PDMA reset (%d times)!!!\n", 
+			__func__, fe_reset_times);
+	spin_lock_irqsave(&(ei_local->page_lock), flags);
+	reg_tmp = sysRegRead(FE_GLO_MISC);
+	reg_tmp |= 0x1;
+	sysRegWrite(FE_GLO_MISC, reg_tmp);
+	wmb();
+	mdelay(10);
+	reg_tmp = sysRegRead(ADMA_LRO_CTRL_DW3);
+	reg_tmp |= (0x1 << 14);
+	sysRegWrite(ADMA_LRO_CTRL_DW3, reg_tmp);
+	wmb();
+	loop_count = 0;
+	do{
+		adma_rx_dbg0_r = sysRegRead(ADMA_RX_DBG0);
+		dbg_rx_curr_state = (adma_rx_dbg0_r >> 16) & 0x7f;
+		rx_fifo_wcnt = (adma_rx_dbg0_r >> 8) & 0x3f;
+		dbg_cdm_lro_rinf_afifo_rempty = (adma_rx_dbg0_r >> 7) & 0x1;
+		dbg_cdm_eof_rdy_afifo_empty = (adma_rx_dbg0_r >> 6) & 0x1;
+		loop_count++;
+		if(loop_count >= 100){
+			printk("[%s] loop_count timeout!!!\n", __func__);
+			break;
+		}
+		mdelay(10);
+	}while(((dbg_rx_curr_state != 0x17) && (dbg_rx_curr_state != 0x00)) ||
+		(rx_fifo_wcnt != 0) ||
+		(!dbg_cdm_lro_rinf_afifo_rempty) ||
+		(!dbg_cdm_eof_rdy_afifo_empty));
+	reg_tmp = sysRegRead(ADMA_LRO_CTRL_DW3);
+	reg_tmp &= 0xffffbfff;
+	sysRegWrite(ADMA_LRO_CTRL_DW3, reg_tmp);
+	wmb();
+	reg_tmp = sysRegRead(FE_GLO_MISC);
+	reg_tmp &= 0xfffffffe;
+	sysRegWrite(FE_GLO_MISC, reg_tmp);
+	wmb();
+	spin_unlock_irqrestore(&(ei_local->page_lock), flags);
+}
+
+static int fe_reset_thread(void *resv)
+{
+	u32 adma_rx_dbg0_r = 0;
+	u32 dbg_rx_curr_state, rx_fifo_wcnt;
+	u32 dbg_cdm_lro_rinf_afifo_rempty, dbg_cdm_eof_rdy_afifo_empty;
+	
+	printk("%s called\n", __func__);
+
+	for(;;){		
+		adma_rx_dbg0_r = sysRegRead(ADMA_RX_DBG0);
+		dbg_rx_curr_state = (adma_rx_dbg0_r >> 16) & 0x7f;
+		rx_fifo_wcnt = (adma_rx_dbg0_r >> 8) & 0x3f;
+		dbg_cdm_lro_rinf_afifo_rempty = (adma_rx_dbg0_r >> 7) & 0x1;
+		dbg_cdm_eof_rdy_afifo_empty = (adma_rx_dbg0_r >> 6) & 0x1;
+		//printk("%s scheduled\n", __func__);
+
+		/* check if PSE P0 hang */
+		if( ((dbg_rx_curr_state == 0x17) || (dbg_rx_curr_state == 0x00)) &&
+		       (rx_fifo_wcnt & 0x20) && 
+		       dbg_cdm_lro_rinf_afifo_rempty && 
+		       dbg_cdm_eof_rdy_afifo_empty )
+		{
+			fe_do_reset();
+		}
+		
+		msleep(FE_RESET_POLLING_MS);
+		if(kthread_should_stop())
+			break;
+	}
+
+	printk("%s leaved\n", __func__);
+	return 0;
+}
+#endif	/* CONFIG_ARCH_MT7623 */
+
 /**
  * ei_open - Open/Initialize the ethernet port.
  * @dev: network device to initialize
@@ -3215,7 +3436,9 @@ int ei_open(struct net_device *dev)
 	unsigned long flags;
 #endif
 	END_DEVICE *ei_local;
-
+#ifdef USE_BUILD_SKB
+	unsigned int skb_size;
+#endif
 #ifdef CONFIG_RAETH_LRO
 	const char *lan_ip_tmp; 
 #ifdef CONFIG_DUAL_IMAGE
@@ -3275,48 +3498,62 @@ int ei_open(struct net_device *dev)
         /* receiving packet buffer allocation - NUM_RX_DESC x MAX_RX_LENGTH */
         for ( i = 0; i < NUM_RX_DESC; i++)
         {
-#if defined (CONFIG_RAETH_SKB_RECYCLE_2K)
-                ei_local->netrx0_skbuf[i] = skbmgr_dev_alloc_skb2k();
+#ifdef USE_BUILD_SKB
+		skb_size = SKB_DATA_ALIGN(MAX_RX_LENGTH + NET_IP_ALIGN + NET_SKB_PAD) +
+		   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+		ei_local->netrx_skbuf[0][i] = netdev_alloc_frag(skb_size);
+                if (ei_local->netrx_skbuf[0][i] == NULL ) {
+                        printk("rx skbuff buffer allocation failed!");
+			goto no_rx_mem;
+		}
 #else
 #ifdef CONFIG_ETH_SLAB_ALLOC_SKB
-		ei_local->netrx0_skbuf[i] = alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN, GFP_ATOMIC);
+		ei_local->netrx_skbuf[0][i] = alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN + NET_SKB_PAD, GFP_ATOMIC);
 #else
-                ei_local->netrx0_skbuf[i] = dev_alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN);
+		ei_local->netrx_skbuf[0][i] = netdev_alloc_skb(dev, MAX_RX_LENGTH + NET_IP_ALIGN);
 #endif
-#endif
-                if (ei_local->netrx0_skbuf[i] == NULL ) {
+                if (ei_local->netrx_skbuf[0][i] == NULL ) {
                         printk("rx skbuff buffer allocation failed!");
+			goto no_rx_mem;
 		} else {
+#ifdef CONFIG_ETH_SLAB_ALLOC_SKB
+			skb_reserve(ei_local->netrx_skbuf[0][i], NET_SKB_PAD);
+#endif
+
 #if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		    skb_reserve(ei_local->netrx0_skbuf[i], NET_IP_ALIGN);
+		    skb_reserve(ei_local->netrx_skbuf[0][i], NET_IP_ALIGN);
 #endif
 		}
+#endif	/* USE_BUILD_SKB */
 		
 #if defined (CONFIG_RAETH_MULTIPLE_RX_RING) 
 #if defined(CONFIG_ARCH_MT7623)
-		ei_local->netrx3_skbuf[i] = dev_alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN);
-		if (ei_local->netrx3_skbuf[i] == NULL ) {
-			printk("rx3 skbuff buffer allocation failed!");
+		ei_local->netrx_skbuf[3][i] = netdev_alloc_skb(dev, MAX_RX_LENGTH + NET_IP_ALIGN);
+        if (ei_local->netrx_skbuf[3][i] == NULL ) {
+            printk("rx3 skbuff buffer allocation failed!");
+	    goto no_rx_mem;
 		} else {
 #if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		    skb_reserve(ei_local->netrx3_skbuf[i], NET_IP_ALIGN);
+		    skb_reserve(ei_local->netrx_skbuf[3][i], NET_IP_ALIGN);
 #endif
 		}
-		ei_local->netrx2_skbuf[i] = dev_alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN);
-		if (ei_local->netrx2_skbuf[i] == NULL ) {
-			printk("rx2 skbuff buffer allocation failed!");
+		ei_local->netrx_skbuf[2][i] = netdev_alloc_skb(dev, MAX_RX_LENGTH + NET_IP_ALIGN);
+        if (ei_local->netrx_skbuf[2][i] == NULL ) {
+            printk("rx2 skbuff buffer allocation failed!");
+	    goto no_rx_mem;
 		} else {
 #if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		    skb_reserve(ei_local->netrx2_skbuf[i], NET_IP_ALIGN);
+		    skb_reserve(ei_local->netrx_skbuf[2][i], NET_IP_ALIGN);
 #endif
 		}
 #endif  /* CONFIG_ARCH_MT7623 */
-		ei_local->netrx1_skbuf[i] = dev_alloc_skb(MAX_RX_LENGTH + NET_IP_ALIGN);
-                if (ei_local->netrx1_skbuf[i] == NULL ) {
+		ei_local->netrx_skbuf[1][i] = netdev_alloc_skb(dev, MAX_RX_LENGTH + NET_IP_ALIGN);
+                if (ei_local->netrx_skbuf[1][i] == NULL ) {
                         printk("rx1 skbuff buffer allocation failed!");
+			goto no_rx_mem;
 		} else {
 #if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		    skb_reserve(ei_local->netrx1_skbuf[i], NET_IP_ALIGN);
+		    skb_reserve(ei_local->netrx_skbuf[1][i], NET_IP_ALIGN);
 #endif
 		}
 #endif
@@ -3327,28 +3564,49 @@ int ei_open(struct net_device *dev)
 	printk("ei_local->hw_lro_sdl_size=%d\n", ei_local->hw_lro_sdl_size);
 
 	for ( i = 0; i < NUM_LRO_RX_DESC; i++){
-		ei_local->netrx3_skbuf[i] = dev_alloc_skb(MAX_LRO_RX_LENGTH + NET_IP_ALIGN);
-		if (ei_local->netrx3_skbuf[i] == NULL ) {
+#ifdef USE_BUILD_SKB
+		skb_size = SKB_DATA_ALIGN(MAX_LRO_RX_LENGTH + NET_IP_ALIGN) +
+			   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+		ei_local->netrx_skbuf[3][i] = netdev_alloc_frag(skb_size);
+#else
+		ei_local->netrx_skbuf[3][i] = netdev_alloc_skb(dev, MAX_LRO_RX_LENGTH + NET_IP_ALIGN);
+#endif
+		if (ei_local->netrx_skbuf[3][i] == NULL ) {
 			printk("rx3 skbuff buffer allocation failed!");
+			goto no_rx_mem;
 		} else {
 #if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		    skb_reserve(ei_local->netrx3_skbuf[i], NET_IP_ALIGN);
+		    skb_reserve(ei_local->netrx_skbuf[3][i], NET_IP_ALIGN);
 #endif
 		}
-		ei_local->netrx2_skbuf[i] = dev_alloc_skb(MAX_LRO_RX_LENGTH + NET_IP_ALIGN);
-		if (ei_local->netrx2_skbuf[i] == NULL ) {
+#ifdef USE_BUILD_SKB
+		skb_size = SKB_DATA_ALIGN(MAX_LRO_RX_LENGTH + NET_IP_ALIGN) +
+			   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+		ei_local->netrx_skbuf[2][i] = netdev_alloc_frag(skb_size);
+#else
+		ei_local->netrx_skbuf[2][i] = netdev_alloc_skb(dev, MAX_LRO_RX_LENGTH + NET_IP_ALIGN);
+#endif
+		if (ei_local->netrx_skbuf[2][i] == NULL ) {
 			printk("rx2 skbuff buffer allocation failed!");
+			goto no_rx_mem;
 		} else {
 #if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		    skb_reserve(ei_local->netrx2_skbuf[i], NET_IP_ALIGN);
+		    skb_reserve(ei_local->netrx_skbuf[2][i], NET_IP_ALIGN);
 #endif
 		}
-		ei_local->netrx1_skbuf[i] = dev_alloc_skb(MAX_LRO_RX_LENGTH + NET_IP_ALIGN);
-		if (ei_local->netrx1_skbuf[i] == NULL ) {
+#ifdef USE_BUILD_SKB
+		skb_size = SKB_DATA_ALIGN(MAX_LRO_RX_LENGTH + NET_IP_ALIGN) +
+			   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+		ei_local->netrx_skbuf[1][i] = netdev_alloc_frag(skb_size);
+#else
+		ei_local->netrx_skbuf[1][i] = netdev_alloc_skb(dev, MAX_LRO_RX_LENGTH + NET_IP_ALIGN);
+#endif
+		if (ei_local->netrx_skbuf[1][i] == NULL ) {
 			printk("rx1 skbuff buffer allocation failed!");
+			goto no_rx_mem;
 		} else {
 #if !defined (CONFIG_RAETH_SCATTER_GATHER_RX_DMA)
-		    skb_reserve(ei_local->netrx1_skbuf[i], NET_IP_ALIGN);
+		    skb_reserve(ei_local->netrx_skbuf[1][i], NET_IP_ALIGN);
 #endif
 		}
 	}
@@ -3364,10 +3622,15 @@ int ei_open(struct net_device *dev)
 	*((volatile u32 *)(RALINK_SYSCTL_BASE+0x34)) = 0x00800000;
 	*((volatile u32 *)(RALINK_SYSCTL_BASE+0x34)) = 0x00000000;
 #endif
-        fe_dma_init(dev);
+
+        err = fe_dma_init(dev);
+	if(err)
+		return err;
 	
 #if defined (CONFIG_RAETH_HW_LRO)
-    fe_hw_lro_init(dev);
+	err = fe_hw_lro_init(dev);
+	if(err)
+		return err;
 #endif  /* CONFIG_RAETH_HW_LRO */
 
 	fe_sw_init(); //initialize fe and switch register
@@ -3548,7 +3811,20 @@ int ei_open(struct net_device *dev)
 #endif  /* CONFIG_RAETH_HW_LRO */
 
 	forward_config(dev);
+
+#if defined(CONFIG_ARCH_MT7623)
+	kreset_task = kthread_create(fe_reset_thread, NULL, "FE_reset_kthread");
+	if (IS_ERR(kreset_task)){
+		return PTR_ERR(kreset_task);
+	}
+	wake_up_process(kreset_task);
+#endif
+
+	
 	return 0;
+
+no_rx_mem:
+	return -ENOMEM;
 }
 
 /**
@@ -3563,6 +3839,10 @@ int ei_close(struct net_device *dev)
 {
 	int i;
 	END_DEVICE *ei_local = netdev_priv(dev);	// device pointer
+
+#if defined(CONFIG_ARCH_MT7623)
+	kthread_stop(kreset_task);
+#endif
 
 	netif_stop_queue(dev);
         ra2880stop(ei_local);
@@ -3588,6 +3868,7 @@ int ei_close(struct net_device *dev)
 	VirtualIF_close(ei_local->PseudoDev);
 #endif
 
+	fe_reset();
 
 #ifdef WORKQUEUE_BH
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,35)
@@ -3599,7 +3880,6 @@ int ei_close(struct net_device *dev)
 	cancel_work_sync(&ei_local->rx_wq);
 #endif
 #endif
-	tasklet_kill(&ei_local->tx_tasklet);
 	tasklet_kill(&ei_local->rx_tasklet);
 #endif // WORKQUEUE_BH //
 
@@ -3619,40 +3899,72 @@ int ei_close(struct net_device *dev)
 
         for ( i = 0; i < NUM_RX_DESC; i++)
         {
-                if (ei_local->netrx0_skbuf[i] != NULL) {
-                        dev_kfree_skb(ei_local->netrx0_skbuf[i]);
-			ei_local->netrx0_skbuf[i] = NULL;
+                if (ei_local->netrx_skbuf[0][i] != NULL) {
+#ifndef USE_BUILD_SKB
+                        dev_kfree_skb(ei_local->netrx_skbuf[0][i]);
+#else
+			put_page(virt_to_head_page(ei_local->netrx_skbuf[0][i]));
+#endif
+			ei_local->netrx_skbuf[0][i] = NULL;
 		}
-#if defined (CONFIG_RAETH_HW_LRO)
-                if (ei_local->netrx3_skbuf[i] != NULL) {
-                        dev_kfree_skb(ei_local->netrx3_skbuf[i]);
-			ei_local->netrx3_skbuf[i] = NULL;
-		}
-                if (ei_local->netrx2_skbuf[i] != NULL) {
-                        dev_kfree_skb(ei_local->netrx2_skbuf[i]);
-			ei_local->netrx2_skbuf[i] = NULL;
-		}
-                if (ei_local->netrx1_skbuf[i] != NULL) {
-                        dev_kfree_skb(ei_local->netrx1_skbuf[i]);
-			ei_local->netrx1_skbuf[i] = NULL;
-		}
-#elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
+#if defined (CONFIG_RAETH_MULTIPLE_RX_RING)
 #if defined(CONFIG_ARCH_MT7623)
-                if (ei_local->netrx3_skbuf[i] != NULL) {
-                        dev_kfree_skb(ei_local->netrx3_skbuf[i]);
-			ei_local->netrx3_skbuf[i] = NULL;
+                if (ei_local->netrx_skbuf[3][i] != NULL) {
+#ifndef USE_BUILD_SKB
+                        dev_kfree_skb(ei_local->netrx_skbuf[3][i]);
+#else
+			put_page(virt_to_head_page(ei_local->netrx_skbuf[3][i]));
+#endif
+			ei_local->netrx_skbuf[3][i] = NULL;
 		}
-                if (ei_local->netrx2_skbuf[i] != NULL) {
-                        dev_kfree_skb(ei_local->netrx2_skbuf[i]);
-			ei_local->netrx2_skbuf[i] = NULL;
+                if (ei_local->netrx_skbuf[2][i] != NULL) {
+#ifndef USE_BUILD_SKB
+                        dev_kfree_skb(ei_local->netrx_skbuf[2][i]);
+#else
+			put_page(virt_to_head_page(ei_local->netrx_skbuf[2][i]));
+#endif
+			ei_local->netrx_skbuf[2][i] = NULL;
 		}
 #endif  /* CONFIG_ARCH_MT7623 */
-                if (ei_local->netrx1_skbuf[i] != NULL) {
-                        dev_kfree_skb(ei_local->netrx1_skbuf[i]);
-			ei_local->netrx1_skbuf[i] = NULL;
+                if (ei_local->netrx_skbuf[1][i] != NULL) {
+#ifndef USE_BUILD_SKB
+                        dev_kfree_skb(ei_local->netrx_skbuf[1][i]);
+#else
+			put_page(virt_to_head_page(ei_local->netrx_skbuf[1][i]));
+#endif
+			ei_local->netrx_skbuf[1][i] = NULL;
 		}
 #endif
         }
+
+#if defined (CONFIG_RAETH_HW_LRO)
+	for ( i = 0; i < NUM_LRO_RX_DESC; i++){
+		if (ei_local->netrx_skbuf[3][i] != NULL) {
+#ifndef USE_BUILD_SKB
+			dev_kfree_skb(ei_local->netrx_skbuf[3][i]);
+#else
+			put_page(virt_to_head_page(ei_local->netrx_skbuf[3][i]));
+#endif
+			ei_local->netrx_skbuf[3][i] = NULL;
+		}
+		if (ei_local->netrx_skbuf[2][i] != NULL) {
+#ifndef USE_BUILD_SKB
+			dev_kfree_skb(ei_local->netrx_skbuf[2][i]);
+#else
+			put_page(virt_to_head_page(ei_local->netrx_skbuf[2][i]));
+#endif
+			ei_local->netrx_skbuf[2][i] = NULL;
+		}
+		if (ei_local->netrx_skbuf[1][i] != NULL) {
+#ifndef USE_BUILD_SKB
+			dev_kfree_skb(ei_local->netrx_skbuf[1][i]);
+#else
+			put_page(virt_to_head_page(ei_local->netrx_skbuf[1][i]));
+#endif
+			ei_local->netrx_skbuf[1][i] = NULL;
+		}
+	}
+#endif
 
 	for ( i = 0; i < NUM_TX_DESC; i++)
 	{
@@ -3665,65 +3977,65 @@ int ei_close(struct net_device *dev)
 	/* TX Ring */
 #ifdef CONFIG_RAETH_QDMA
        if (ei_local->txd_pool != NULL) {
-	   pci_free_consistent(NULL, NUM_TX_DESC*sizeof(struct QDMA_txdesc), ei_local->txd_pool, ei_local->phy_txd_pool);
+	   dma_free_coherent(NULL, NUM_TX_DESC*sizeof(struct QDMA_txdesc), ei_local->txd_pool, ei_local->phy_txd_pool);
        }
        if (ei_local->free_head != NULL){
-	       pci_free_consistent(NULL, NUM_QDMA_PAGE * sizeof(struct QDMA_txdesc), ei_local->free_head, ei_local->phy_free_head);
+	       dma_free_coherent(NULL, NUM_QDMA_PAGE * sizeof(struct QDMA_txdesc), ei_local->free_head, ei_local->phy_free_head);
        }
        if (ei_local->free_page_head != NULL){
-	       pci_free_consistent(NULL, NUM_QDMA_PAGE * QDMA_PAGE_SIZE, ei_local->free_page_head, ei_local->phy_free_page_head);
+	       dma_free_coherent(NULL, NUM_QDMA_PAGE * QDMA_PAGE_SIZE, ei_local->free_page_head, ei_local->phy_free_page_head);
        }
 #else	
        if (ei_local->tx_ring0 != NULL) {
-	   pci_free_consistent(NULL, NUM_TX_DESC*sizeof(struct PDMA_txdesc), ei_local->tx_ring0, ei_local->phy_tx_ring0);
+	   dma_free_coherent(dev->dev.parent, NUM_TX_DESC*sizeof(struct PDMA_txdesc), ei_local->tx_ring0, ei_local->phy_tx_ring0);
        }
 #endif       
 
 #if defined (CONFIG_RAETH_QOS)
        if (ei_local->tx_ring1 != NULL) {
-	   pci_free_consistent(NULL, NUM_TX_DESC*sizeof(struct PDMA_txdesc), ei_local->tx_ring1, ei_local->phy_tx_ring1);
+	   dma_free_coherent(NULL, NUM_TX_DESC*sizeof(struct PDMA_txdesc), ei_local->tx_ring1, ei_local->phy_tx_ring1);
        }
 
+#if !defined (CONFIG_RALINK_RT2880)
        if (ei_local->tx_ring2 != NULL) {
-	   pci_free_consistent(NULL, NUM_TX_DESC*sizeof(struct PDMA_txdesc), ei_local->tx_ring2, ei_local->phy_tx_ring2);
+	   dma_free_coherent(dev->dev.parent, NUM_TX_DESC*sizeof(struct PDMA_txdesc), ei_local->tx_ring2, ei_local->phy_tx_ring2);
        }
 
        if (ei_local->tx_ring3 != NULL) {
-	   pci_free_consistent(NULL, NUM_TX_DESC*sizeof(struct PDMA_txdesc), ei_local->tx_ring3, ei_local->phy_tx_ring3);
+	   dma_free_coherent(dev->dev.parent, NUM_TX_DESC*sizeof(struct PDMA_txdesc), ei_local->tx_ring3, ei_local->phy_tx_ring3);
        }
+#endif
 #endif
 	/* RX Ring */
 #ifdef CONFIG_32B_DESC
-       kfree(ei_local->rx_ring0);
+       kfree(ei_local->rx_ring[0]);
 #else
-        pci_free_consistent(NULL, NUM_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring0, ei_local->phy_rx_ring0);
+	dma_free_coherent(dev->dev.parent, NUM_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring[0], ei_local->phy_rx_ring0);
 #endif
 #if defined CONFIG_RAETH_QDMA && !defined(CONFIG_RAETH_QDMATX_QDMARX)	
 #ifdef CONFIG_32B_DESC
 	kfree(ei_local->qrx_ring);
 #else
-	pci_free_consistent(NULL, NUM_QRX_DESC*sizeof(struct PDMA_rxdesc), ei_local->qrx_ring, ei_local->phy_qrx_ring);
+	dma_free_coherent(NULL, NUM_QRX_DESC*sizeof(struct PDMA_rxdesc), ei_local->qrx_ring, ei_local->phy_qrx_ring);
 #endif
 #endif	
 #if defined (CONFIG_RAETH_HW_LRO)
-        pci_free_consistent(NULL, NUM_LRO_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring3, ei_local->phy_rx_ring3);
-        pci_free_consistent(NULL, NUM_LRO_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring2, ei_local->phy_rx_ring2);
-        pci_free_consistent(NULL, NUM_LRO_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring1, ei_local->phy_rx_ring1);
+	dma_free_coherent(dev->dev.parent, NUM_LRO_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring[3], ei_local->phy_rx_ring3);
+  	dma_free_coherent(dev->dev.parent, NUM_LRO_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring[2], ei_local->phy_rx_ring2);
+	dma_free_coherent(dev->dev.parent, NUM_LRO_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring[1], ei_local->phy_rx_ring1);
 #elif defined (CONFIG_RAETH_MULTIPLE_RX_RING)
 #ifdef CONFIG_32B_DESC
-	kfree(ei_local->rx_ring1);
+	kfree(ei_local->rx_ring[1]);
 #else
-#if defined(CONFIG_ARCH_MT7623)
-        pci_free_consistent(NULL, NUM_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring3, ei_local->phy_rx_ring3);
-        pci_free_consistent(NULL, NUM_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring2, ei_local->phy_rx_ring2);
+#if defined(CONFIG_ARCH_MT7623) || defined (CONFIG_ARCH_MT7622)
+	dma_free_coherent(dev->dev.parent, NUM_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring[3], ei_local->phy_rx_ring3);
+	dma_free_coherent(dev->dev.parent, NUM_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring[2], ei_local->phy_rx_ring2);
 #endif  /* CONFIG_ARCH_MT7623 */
-        pci_free_consistent(NULL, NUM_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring1, ei_local->phy_rx_ring1);
+	dma_free_coherent(dev->dev.parent, NUM_RX_DESC*sizeof(struct PDMA_rxdesc), ei_local->rx_ring[1], ei_local->phy_rx_ring1);
 #endif
 #endif
 
 	printk("Free TX/RX Ring Memory!\n");
-
-	fe_reset();
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
 	module_put(THIS_MODULE);
@@ -4349,8 +4661,15 @@ void mt7628_ephy_init(void)
 #if  defined (CONFIG_RALINK_MT7628)
 void rt305x_esw_init(void)
 {
+#if defined (CONFIG_RT3052_ASIC)|| defined (CONFIG_MT7628_FPGA)
 	int i=0;
-	u32 phy_val=0, val=0;
+#endif
+
+#if defined (CONFIG_RT3052_ASIC)|| defined (CONFIG_P5_MAC_TO_PHY_MODE)
+	u32 phy_val=0;
+#endif
+
+	u32 val=0;
 
 	/*
 	 * FC_RLS_TH=200, FC_SET_TH=160
@@ -5028,7 +5347,6 @@ void trgmii_calibration_7530(void){
 
 	u32  TRGMII_7623_base;
 	u32  TRGMII_7530_RD_0;
-	u32  TRGMII_RXCTL;
 	u32  TRGMII_RCK_CTRL;
 	u32 TRGMII_7530_base;
 	u32 TRGMII_7530_TX_base;
@@ -5675,7 +5993,9 @@ void setup_internal_gsw(void)
 {
 	u32	i;
 	u32	regValue;
+#if defined(CONFIG_ARCH_MT7623)
 	u32     xtal_mode;
+#endif
 
 #if defined (CONFIG_ARCH_MT7623)
 	mt7623_pinmux_set();
@@ -5791,28 +6111,43 @@ void setup_internal_gsw(void)
 	regValue |= (1<<6); //Disable Port 5
 	regValue |= (1<<13); //Port 5 as GMAC, no Internal PHY
 
+#if defined (CONFIG_MOCA_SUPPORT)
+	mii_mgr_write(31, 0x3500, 0x7e33b); // Force switch port5 to 1000 F/D mode FC=ON
+	*(volatile u_long *)(RALINK_SYSCTL_BASE + 0x60) |= (0x1 << 15);  //RGMII2=GPIO mode
+#endif /* ENABLE_GMAC5_AS_LAN */
 #if defined (CONFIG_RAETH_GMAC2)
 	/*RGMII2=Normal mode*/
 	*(volatile u_long *)(RALINK_SYSCTL_BASE + 0x60) &= ~(0x1 << 15);
 
 	/*GMAC2= RGMII mode*/
 	*(volatile u_long *)(SYSCFG1) &= ~(0x3 << 14);
+#ifdef CONFIG_GE2_RGMII_AN
+	mii_mgr_write(31, 0x3500, 0x56300);
+	sysRegWrite(RALINK_ETH_SW_BASE+0x200, 0x21056300);//(GE2, auto-polling)
+	enable_auto_negotiate(0);
+#else
 	mii_mgr_write(31, 0x3500, 0x5e33b); //MT7530 P5 Force 1000, we can ignore this setting??????
 	sysRegWrite(RALINK_ETH_SW_BASE+0x200, 0x2105e33b);//(GE2, Force 1000)
 
-	/* set MT7530 Port 5 to PHY 0/4 mode */
-#if defined (CONFIG_GE_RGMII_INTERNAL_P0_AN)
-	regValue &= ~((1<<13)|(1<<6));
-	regValue |= ((1<<7)|(1<<16)|(1<<20));
-#elif defined (CONFIG_GE_RGMII_INTERNAL_P4_AN)
-	regValue &= ~((1<<13)|(1<<6)|(1<<20));
-	regValue |= ((1<<7)|(1<<16));
 #endif
 
-	regValue |= (1<<13); //Port 5 as GMAC, no Internal PHY
+	/* set MT7530 Port 5 to PHY 0/4 mode */
+#if defined (CONFIG_GE_RGMII_INTERNAL_P0_AN)
+	regValue &= ~(1<<6);
+	regValue |= ((1<<7)|((1<<13)|1<<16)|(1<<20));
+#elif defined (CONFIG_GE_RGMII_INTERNAL_P4_AN)
+	regValue &= ~((1<<6)|(1<<20));
+	regValue |= ((1<<7)|(1<<13)|(1<<16));
+#endif
+
 	/*sysRegWrite(GDMA2_FWD_CFG, 0x20710000);*/
 #endif
 	regValue &= ~(1<<5);
+#ifdef CONFIG_GE2_RGMII_AN
+	regValue |= (1<<6); //disable P5
+#else
+	regValue &= ~(1<<6); //enable P5
+#endif
 	regValue |= (1<<16);//change HW-TRAP
         printk("change HW-TRAP to 0x%x\n",regValue);
 	mii_mgr_write(31, 0x7804 ,regValue);
@@ -5820,10 +6155,14 @@ void setup_internal_gsw(void)
 	mii_mgr_read(31, 0x7800, &regValue);
 	regValue = (regValue >> 9) & 0x3;
 	if(regValue == 0x3){//25Mhz Xtal
+#if defined(CONFIG_ARCH_MT7623)
 		xtal_mode = 1;
+#endif
 		/*Do Nothing*/
 	}else if(regValue == 0x2){ //40Mhz
+#if defined(CONFIG_ARCH_MT7623)
 		xtal_mode = 2;
+#endif
 		mii_mgr_write(0, 13, 0x1f);  // disable MT7530 core clock
 		mii_mgr_write(0, 14, 0x410);
 		mii_mgr_write(0, 13, 0x401f);
@@ -5851,7 +6190,9 @@ void setup_internal_gsw(void)
 		mii_mgr_write(0, 13, 0x401f);
 
 	}else{
+#if defined(CONFIG_ARCH_MT7623)
 		xtal_mode = 3;
+#endif
 		/*TODO*/
 	}
 
@@ -5875,8 +6216,13 @@ void setup_internal_gsw(void)
 #endif
 
 #if defined (CONFIG_MT7621_ASIC)
+#if defined (CONFIG_MOCA_SUPPORT)  /* delay setting for specific MAC or PHY */
+	mii_mgr_write(31, 0x7b00, 0x1);  // adjust timing depend external MAC or PHY setting
+	mii_mgr_write(31, 0x7b04, 0x14);  // adjust timing depend external MAC or PHY setting
+#else 
 	mii_mgr_write(31, 0x7b00, 0x102);  //delay setting for 10/1000M
 	mii_mgr_write(31, 0x7b04, 0x14);  //delay setting for 10/1000M
+#endif /* ENABLE_GMAC5_AS_LAN */
 
 	mii_mgr_write(31, 0x7a54, 0x44);  //lower driving
 	mii_mgr_write(31, 0x7a5c, 0x44);  //lower driving
@@ -5944,7 +6290,9 @@ int __init ra2882eth_init(void)
 {
 	int ret;
 	struct net_device *dev = alloc_etherdev(sizeof(END_DEVICE));
+#if !defined (CONFIG_MIPS)	
 	END_DEVICE*     ei_local = netdev_priv(dev);
+#endif
 
 #ifdef CONFIG_RALINK_VISTA_BASIC
 	int sw_id=0;
@@ -6231,11 +6579,13 @@ void fe_sw_init(void)
 void ra2882eth_cleanup_module(void)
 {
 	struct net_device *dev = dev_raether;
-	END_DEVICE *ei_local;
-
-	ei_local = netdev_priv(dev);
 
 #ifdef CONFIG_PSEUDO_SUPPORT
+	END_DEVICE *ei_local;
+#endif
+
+#ifdef CONFIG_PSEUDO_SUPPORT
+	ei_local = netdev_priv(dev);
 	unregister_netdev(ei_local->PseudoDev);
 	free_netdev(ei_local->PseudoDev);
 #endif
@@ -6249,6 +6599,7 @@ void ra2882eth_cleanup_module(void)
 #endif
 }
 
+#if 0
 __attribute__((optimize("O0"))) inline void sysRegWrite(unsigned int phys, unsigned int val)
 {
 	unsigned int reg;
@@ -6256,6 +6607,7 @@ __attribute__((optimize("O0"))) inline void sysRegWrite(unsigned int phys, unsig
 	reg=(*(volatile unsigned int *)((phys)));
 	return;
 }
+#endif
 
 #ifdef	CONFIG_ETH_WIFI_OOM_DEBUG
 void raether_dump_pdma_info(void)

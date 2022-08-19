@@ -67,7 +67,9 @@ obj-$(CONFIG_RALINK_SPI) 	+= spi_drv.o
 obj-$(CONFIG_RALINK_I2C) 	+= i2c_drv.o
 obj-$(CONFIG_MTK_NFC_MT6605_SIM)+= mt6605_sim.o
 obj-$(CONFIG_RALINK_PCM)	+= pcm/
-obj-$(CONFIG_RALINK_I2S)	+= i2s/
+obj-$(CONFIG_RALINK_I2S)        += i2s/core/
+obj-$(CONFIG_RALINK_I2C_CODEC)  += i2s/codec/
+obj-$(CONFIG_I2S_WITH_AEC)      += i2s/aec/
 obj-$(CONFIG_RALINK_SPDIF)      += spdif/
 
 obj-$(CONFIG_JS_RTC)		+= js-rtc.o

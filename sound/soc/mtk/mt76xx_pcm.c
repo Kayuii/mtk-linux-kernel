@@ -66,7 +66,8 @@ static int mt76xx_pcm_hw_free(struct snd_pcm_substream *substream);
 static int mt76xx_pcm_free_dma_buffer(struct snd_pcm_substream *substream,int stream);
 static int mt76xx_pcm_allocate_dma_buffer(struct snd_pcm_substream *substream,int stream);
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(3,10,20)
+//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,20)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,14)
 static int mt76xx_platform_drv_probe(struct platform_device *pdev);
 static int mt76xx_platform_drv_remove(struct platform_device *pdev);
 #endif
@@ -152,15 +153,15 @@ static int mt76xx_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	int ret = 0;
 	i2s_config_type* rtd = (i2s_config_type*)substream->runtime->private_data;
 	struct snd_pcm_runtime *runtime= substream->runtime;
-
-	//printk("******* %s *********\n", __func__);
+/*
+	printk("******* %s *********\n", __func__);
 	printk("trigger cmd:%s\n",(cmd==SNDRV_PCM_TRIGGER_START)?"START":\
 			(cmd==SNDRV_PCM_TRIGGER_RESUME)?"RESUME":\
 			(cmd==SNDRV_PCM_TRIGGER_PAUSE_RELEASE)?"PAUSE_RELEASE":\
 			(cmd==SNDRV_PCM_TRIGGER_STOP)?"STOP":\
 			(cmd==SNDRV_PCM_TRIGGER_SUSPEND)?"SUSPEND":\
 			(cmd==SNDRV_PCM_TRIGGER_PAUSE_PUSH)?"PAUSE_PUSH":"default");
-
+*/
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
@@ -235,7 +236,7 @@ static int mt76xx_pcm_mmap(struct snd_pcm_substream *substream, struct vm_area_s
         unsigned long size;
 
         size = vma->vm_end-vma->vm_start;
-        printk("******* %s: size :%x end:%x start:%x *******\n", __func__,size,vma->vm_end,vma->vm_start);
+        //printk("******* %s: size :%x end:%x start:%x *******\n", __func__,size,vma->vm_end,vma->vm_start);
         ret = i2s_mmap_remap(vma, size);
 
         return ret;
@@ -316,7 +317,7 @@ static int mt76xx_pcm_hw_free(struct snd_pcm_substream *substream)
 		if(rtd->dmaStat[SNDRV_PCM_STREAM_CAPTURE]){
 
 			gdma_En_Switch(rtd,STREAM_CAPTURE,GDMA_I2S_DIS);
-			i2s_tx_end_sleep_on(rtd);
+			i2s_rx_end_sleep_on(rtd);
 			tasklet_kill(&i2s_rx_tasklet);
 			i2s_rx_disable(rtd);
 			//mt76xx_pcm_free_dma_buffer(substream,substream->stream);
@@ -358,7 +359,7 @@ static int mt76xx_pcm_allocate_dma_buffer(struct snd_pcm_substream *substream,
 	//printk("******* %s *******\n", __func__);
 	if(!buf->area){
 #if defined(CONFIG_I2S_MMAP)
-		printk("\n############## MMAP ##############\n");
+		//printk("\n############## MMAP ##############\n");
 		buf->dev.type = SNDRV_DMA_TYPE_DEV;
 #else
 		buf->dev.type = SNDRV_DMA_TYPE_UNKNOWN;
@@ -378,7 +379,7 @@ static int mt76xx_pcm_allocate_dma_buffer(struct snd_pcm_substream *substream,
 #endif
 		snd_pcm_set_runtime_buffer(substream, buf);
 	} else{
-		printk("Buffer have been allocated!\n");
+		//printk("Buffer have been allocated!\n");
 	}
 
 	return 0;
@@ -442,7 +443,8 @@ static void mt76xx_pcm_free(struct snd_pcm *pcm)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,20)
+//#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,20)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,14)
 static int mt76xx_platform_drv_probe(struct platform_device *pdev)
 {
 	//printk("******* %s *******\n", __func__);
@@ -469,7 +471,7 @@ static struct platform_driver mt76xx_pcm_driver = {
 static int __init mt76xx_pcm_init(void)
 {
 
-	printk("******* %s *******\n", __func__);
+	//printk("******* %s *******\n", __func__);
 	return platform_driver_register(&mt76xx_pcm_driver);
 }
 
@@ -481,13 +483,13 @@ static void __exit mt76xx_pcm_exit(void)
 static int __init mt76xx_pcm_init(void)
 {
 
-	printk("******* %s *******\n", __func__);
+	//printk("******* %s *******\n", __func__);
 	return snd_soc_register_platform(&mt76xx_soc_platform);
 }
 
 static void __exit mt76xx_pcm_exit(void)
 {
-	printk("******* %s *******\n", __func__);
+	//printk("******* %s *******\n", __func__);
 	snd_soc_unregister_platform(&mt76xx_soc_platform);
 }
 #endif
@@ -497,4 +499,3 @@ module_exit(mt76xx_pcm_exit);
 MODULE_AUTHOR("Dora Chen");
 MODULE_DESCRIPTION("MTK APSoC I2S DMA driver");
 MODULE_LICENSE("GPL");
-

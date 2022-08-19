@@ -423,13 +423,17 @@ packet_routed:
 #if  defined(CONFIG_RA_HW_NAT) || defined(CONFIG_RA_HW_NAT_MODULE)
 #if defined (CONFIG_RA_HW_NAT_PPTP_L2TP)
     /* only clear headeroom for TCP OR not L2TP packets */
-    if( (iph->protocol == 0x6) || (ntohs(udp_hdr(skb)->dest) != 1701) ) {
-        FOE_MAGIC_TAG(skb) = 0;
-        FOE_AI(skb) = UN_HIT;
-    }
+    	if( (iph->protocol == 0x6) || (ntohs(udp_hdr(skb)->dest) != 1701) ) {
+    		if(IS_SPACE_AVAILABLED(skb)){
+        		FOE_MAGIC_TAG(skb) = 0;
+        		FOE_AI(skb) = UN_HIT;
+        	}	
+    	}
 #else
-    FOE_MAGIC_TAG(skb) = 0;
-    FOE_AI(skb) = UN_HIT;
+	if(IS_SPACE_AVAILABLED(skb)){
+    		FOE_MAGIC_TAG(skb) = 0;
+    		FOE_AI(skb) = UN_HIT;
+    	}
 #endif
 #endif
 

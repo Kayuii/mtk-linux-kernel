@@ -1603,7 +1603,7 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 		if (skb)
 			available = TCP_SKB_CB(skb)->seq + skb->len - (*seq);
 #if defined (CONFIG_SPLICE_NET_SUPPORT)
-		if (msg->msg_flags & MSG_KERNSPACE) {
+		if (flags & MSG_NETSPLICE) {
 			if ((available >= target) &&
 			   (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
 			   !sysctl_tcp_low_latency &&
@@ -1686,7 +1686,7 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 
 			if (sk->sk_err) {
 #if defined (CONFIG_SPLICE_NET_SUPPORT)
-				if ((msg->msg_flags & MSG_KERNSPACE) &&
+				if ((flags & MSG_NETSPLICE) &&
 					ECONNRESET == sk->sk_err )
 					printk("connection reset by peer.\n");
 #endif
@@ -1875,7 +1875,7 @@ do_prequeue:
 #endif
 			{
 #if defined (CONFIG_SPLICE_NET_SUPPORT)
-				if (msg->msg_flags & MSG_KERNSPACE)
+				if (flags & MSG_NETSPLICE)
 					err = skb_copy_datagram_iovec_kernel(skb, offset, msg->msg_iov, used);
 				else
 #endif
@@ -1947,7 +1947,7 @@ skip_copy:
 
 	if (tp->ucopy.pinned_list) {
 #if defined (CONFIG_SPLICE_NET_SUPPORT)
-		if (msg->msg_flags & MSG_KERNSPACE)
+		if (flags & MSG_NETSPLICE)
 			dma_unpin_kernel_iovec_pages(tp->ucopy.pinned_list);
 		else
 #endif

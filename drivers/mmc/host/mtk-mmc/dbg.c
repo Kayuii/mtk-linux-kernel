@@ -48,7 +48,6 @@
 #include "mt6575_sd.h"
 #include <linux/seq_file.h>
 
-static char cmd_buf[256];
 
 /* for debug zone */
 unsigned int sd_debug_zone[4]={
@@ -73,6 +72,8 @@ msdc_mode drv_mode[4]={
 };
 
 #if defined (MT6575_SD_DEBUG)
+static char cmd_buf[256];
+
 /* for driver profile */
 #define TICKS_ONE_MS  (13000)
 u32 gpt_enable = 0;

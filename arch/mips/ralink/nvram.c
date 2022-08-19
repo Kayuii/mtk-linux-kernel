@@ -347,7 +347,7 @@ int ra_nvram_init(void)
 #ifdef  CONFIG_DEVFS_FS
 	if (devfs_register_chrdev(ralink_nvram_major, RALINK_NVRAM_DEVNAME,
 				&ralink_nvram_fops)) {
-		printk(KERN_ERR NAME ": unable to register character device\n");
+		printk(KERN_ERR ": unable to register character device\n");
 		return -EIO;
 	}
 	devfs_handle = devfs_register(NULL, RALINK_NVRAM_DEVNAME,
@@ -372,6 +372,10 @@ int ra_nvram_init(void)
 	try_module_get(THIS_MODULE);
 #endif
 	nvram_sem = kmalloc(sizeof(struct semaphore), GFP_KERNEL);
+	if (!nvram_sem) {
+		printk(KERN_ERR "Can't alloc semaphore !!!\n");
+		return -ENOMEM;
+	}
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,36)
 	init_MUTEX(nvram_sem);
 #else

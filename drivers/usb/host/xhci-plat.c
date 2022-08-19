@@ -130,7 +130,12 @@ static int xhci_plat_probe(struct platform_device *pdev)
 	hcd->rsrc_len = resource_size(res);
 #endif
 
+/* FIXME: 512MB */
+#if 0
 	if (!request_mem_region(hcd->rsrc_start, hcd->rsrc_len,
+#else
+	if (!request_region(hcd->rsrc_start, hcd->rsrc_len,
+#endif
 				driver->description)) {
 		dev_dbg(&pdev->dev, "controller already in use\n");
 		ret = -EBUSY;
@@ -180,7 +185,12 @@ unmap_registers:
 	iounmap(hcd->regs);
 
 release_mem_region:
+/* FIXME: 512MB */
+#if 0
 	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
+#else
+	release_region(hcd->rsrc_start, hcd->rsrc_len);
+#endif
 
 put_hcd:
 	usb_put_hcd(hcd);

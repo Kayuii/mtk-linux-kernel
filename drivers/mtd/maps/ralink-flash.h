@@ -23,7 +23,6 @@
 #endif
 #endif
 
-
 #ifdef CONFIG_RT2880_ROOTFS_IN_FLASH
 #ifdef CONFIG_ROOTFS_IN_FLASH_NO_PADDING
 #define CONFIG_MTD_KERNEL_PART_SIZ 0
@@ -88,6 +87,13 @@
 #define BOOT_FROM_NAND	2
 #define BOOT_FROM_SPI	3
 
+#if defined (CONFIG_SECURE_IMAGE)
+#define RSA256_SIG_SIZE 256
+#define PUB_KEY_SIZE 294
+#else
+#define RSA256_SIG_SIZE 0
+#define PUB_KEY_SIZE 0
+#endif
 int ra_check_flash_type(void);
 
 #endif //__RALINK_FLASH_H__
