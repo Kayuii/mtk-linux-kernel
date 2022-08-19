@@ -9,5 +9,7 @@ obj-$(CONFIG_CNIC) += cnic.o
 obj-$(CONFIG_BNX2X) += bnx2x/
 obj-$(CONFIG_SB1250_MAC) += sb1250-mac.o
 obj-$(CONFIG_TIGON3) += tg3.o
+ifneq ($(CONFIG_TIGON3_V3133D),)
 obj-$(CONFIG_TIGON3_V3133D) += tg3-3.133d/
+endif
 obj-$(CONFIG_BGMAC) += bgmac.o

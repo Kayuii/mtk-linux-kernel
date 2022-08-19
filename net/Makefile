@@ -70,10 +70,9 @@ obj-$(CONFIG_BATMAN_ADV)	+= batman-adv/
 obj-$(CONFIG_NFC)		+= nfc/
 obj-$(CONFIG_OPENVSWITCH)	+= openvswitch/
 obj-$(CONFIG_VSOCKETS)	+= vmw_vsock/
+obj-$(CONFIG_NET_ACTIVITY_STATS)		+= activity_stats.o
 
 ifneq ($(CONFIG_RA_NAT_NONE),y)
 obj-y                           += nat/foe_hook/
 endif
-
 obj-$(CONFIG_RA_HW_NAT)         += nat/hw_nat/
-

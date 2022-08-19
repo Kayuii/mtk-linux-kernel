@@ -268,12 +268,16 @@
 #include <linux/crypto.h>
 #include <linux/time.h>
 #include <linux/slab.h>
+#include <linux/uid_stat.h>
 
 #include <net/icmp.h>
 #include <net/inet_common.h>
 #include <net/tcp.h>
 #include <net/xfrm.h>
 #include <net/ip.h>
+#include <net/ip6_route.h>
+#include <net/ipv6.h>
+#include <net/transp_v6.h>
 #include <net/netdma.h>
 #include <net/sock.h>
 
@@ -281,6 +285,8 @@
 #include <asm/ioctls.h>
 
 int sysctl_tcp_fin_timeout __read_mostly = TCP_FIN_TIMEOUT;
+
+int sysctl_tcp_min_tso_segs __read_mostly = 2;
 
 struct percpu_counter tcp_orphan_count;
 EXPORT_SYMBOL_GPL(tcp_orphan_count);
@@ -574,6 +580,26 @@ int tcp_ioctl(struct sock *sk, int cmd, unsigned long arg)
 		else
 			answ = tp->write_seq - tp->snd_nxt;
 		break;
+		/* MTK_NET_CHANGES */
+        case SIOCKILLSOCK:
+         {
+             struct uid_err uid_e;
+             if (copy_from_user(&uid_e, (char __user *)arg, sizeof(uid_e)))
+                 return -EFAULT;
+             printk(KERN_WARNING "SIOCKILLSOCK uid = %d , err = %d",
+			 	         uid_e.appuid, uid_e.errNum);
+             if (uid_e.errNum == 0)
+             {
+                 // handle BR release problem
+                 tcp_v4_handle_retrans_time_by_uid(uid_e);
+             }
+             else
+             {
+             tcp_v4_reset_connections_by_uid(uid_e);
+             }			 	         
+
+	         return 0;
+         }
 	default:
 		return -ENOIOCTLCMD;
 	}
@@ -786,12 +812,28 @@ static unsigned int tcp_xmit_size_goal(struct sock *sk, u32 mss_now,
 	xmit_size_goal = mss_now;
 
 	if (large_allowed && sk_can_gso(sk)) {
-		xmit_size_goal = ((sk->sk_gso_max_size - 1) -
-				  inet_csk(sk)->icsk_af_ops->net_header_len -
-				  inet_csk(sk)->icsk_ext_hdr_len -
-				  tp->tcp_header_len);
+		u32 gso_size, hlen;
 
-		/* TSQ : try to have two TSO segments in flight */
+		/* Maybe we should/could use sk->sk_prot->max_header here ? */
+		hlen = inet_csk(sk)->icsk_af_ops->net_header_len +
+		       inet_csk(sk)->icsk_ext_hdr_len +
+		       tp->tcp_header_len;
+
+		/* Goal is to send at least one packet per ms,
+		 * not one big TSO packet every 100 ms.
+		 * This preserves ACK clocking and is consistent
+		 * with tcp_tso_should_defer() heuristic.
+		 */
+		gso_size = sk->sk_pacing_rate / (2 * MSEC_PER_SEC);
+		gso_size = max_t(u32, gso_size,
+				 sysctl_tcp_min_tso_segs * mss_now);
+
+		xmit_size_goal = min_t(u32, gso_size,
+				       sk->sk_gso_max_size - 1 - hlen);
+
+		/* TSQ : try to have at least two segments in flight
+		 * (one in NIC TX ring, another in Qdisc)
+		 */
 		xmit_size_goal = min_t(u32, xmit_size_goal,
 				       sysctl_tcp_limit_output_bytes >> 1);
 
@@ -1225,6 +1267,9 @@ out:
 	if (copied)
 		tcp_push(sk, flags, mss_now, tp->nonagle);
 	release_sock(sk);
+
+	if (copied + copied_syn)
+		uid_stat_tcp_snd(current_uid(), copied + copied_syn);
 	return copied + copied_syn;
 
 do_fault:
@@ -1529,6 +1574,7 @@ int tcp_read_sock(struct sock *sk, read_descriptor_t *desc,
 	if (copied > 0) {
 		tcp_recv_skb(sk, seq, &offset);
 		tcp_cleanup_rbuf(sk, copied);
+		uid_stat_tcp_rcv(current_uid(), copied);
 	}
 	return copied;
 }
@@ -1602,20 +1648,24 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 
 		if (skb)
 			available = TCP_SKB_CB(skb)->seq + skb->len - (*seq);
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
-		if (flags & MSG_NETSPLICE) {
+#ifdef CONFIG_SPLICE_NET_SUPPORT
+		if (msg->msg_flags & MSG_KERNSPACE) {
 			if ((available >= target) &&
-			   (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
-			   !sysctl_tcp_low_latency &&
-			   net_dma_find_channel()) {
+			    (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
+			    !sysctl_tcp_low_latency &&
+			    net_dma_find_channel()) {
 				preempt_enable_no_resched();
 				tp->ucopy.pinned_list =
 					dma_pin_kernel_iovec_pages(msg->msg_iov, len);
-			} else {
+			}
+			else {
 				preempt_enable_no_resched();
 			}
 		}
-	}	
+		else {
+			preempt_enable_no_resched();
+		}
+	}
 #else
 		if ((available < target) &&
 		    (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
@@ -1685,11 +1735,6 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 				break;
 
 			if (sk->sk_err) {
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
-				if ((flags & MSG_NETSPLICE) &&
-					ECONNRESET == sk->sk_err )
-					printk("connection reset by peer.\n");
-#endif
 				copied = sock_error(sk);
 				break;
 			}
@@ -1874,18 +1919,21 @@ do_prequeue:
 			} else
 #endif
 			{
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
-				if (flags & MSG_NETSPLICE)
-					err = skb_copy_datagram_iovec_kernel(skb, offset, msg->msg_iov, used);
+#ifdef CONFIG_SPLICE_NET_SUPPORT
+				if (msg->msg_flags & MSG_KERNSPACE) {
+					err = skb_copy_datagram_kernel_iovec(skb, offset, msg->msg_iov, used);
+				}
 				else
 #endif
+				{
 					err = skb_copy_datagram_iovec(skb, offset,
-							msg->msg_iov, used);
-				if (err) {
-					/* Exception. Bailout! */
-					if (!copied)
-						copied = -EFAULT;
-					break;
+						msg->msg_iov, used);
+					if (err) {
+						/* Exception. Bailout! */
+						if (!copied)
+							copied = -EFAULT;
+						break;
+					}
 				}
 			}
 		}
@@ -1946,12 +1994,15 @@ skip_copy:
 	tp->ucopy.dma_chan = NULL;
 
 	if (tp->ucopy.pinned_list) {
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
-		if (flags & MSG_NETSPLICE)
+#ifdef CONFIG_SPLICE_NET_SUPPORT
+		if (msg->msg_flags & MSG_KERNSPACE) {
 			dma_unpin_kernel_iovec_pages(tp->ucopy.pinned_list);
+		}
 		else
 #endif
+		{
 			dma_unpin_iovec_pages(tp->ucopy.pinned_list);
+		}
 		tp->ucopy.pinned_list = NULL;
 	}
 #endif
@@ -1964,6 +2015,9 @@ skip_copy:
 	tcp_cleanup_rbuf(sk, copied);
 
 	release_sock(sk);
+
+	if (copied > 0)
+		uid_stat_tcp_rcv(current_uid(), copied);
 	return copied;
 
 out:
@@ -1972,6 +2026,8 @@ out:
 
 recv_urg:
 	err = tcp_recv_urg(sk, msg, len, flags);
+	if (err > 0)
+		uid_stat_tcp_rcv(current_uid(), err);
 	goto out;
 
 recv_sndq:
@@ -2478,10 +2534,11 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 	case TCP_THIN_DUPACK:
 		if (val < 0 || val > 1)
 			err = -EINVAL;
-		else
+		else {
 			tp->thin_dupack = val;
 			if (tp->thin_dupack)
 				tcp_disable_early_retrans(tp);
+		}
 		break;
 
 	case TCP_REPAIR:
@@ -3485,4 +3542,108 @@ void __init tcp_init(void)
 	tcp_register_congestion_control(&tcp_reno);
 
 	tcp_tasklet_init();
+}
+
+static int tcp_is_local(struct net *net, __be32 addr) {
+	struct rtable *rt;
+	struct flowi4 fl4 = { .daddr = addr };
+	rt = ip_route_output_key(net, &fl4);
+	if (IS_ERR_OR_NULL(rt))
+		return 0;
+	return rt->dst.dev && (rt->dst.dev->flags & IFF_LOOPBACK);
+}
+
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+static int tcp_is_local6(struct net *net, struct in6_addr *addr) {
+	struct rt6_info *rt6 = rt6_lookup(net, addr, addr, 0, 0);
+	return rt6 && rt6->dst.dev && (rt6->dst.dev->flags & IFF_LOOPBACK);
+}
+#endif
+
+/*
+ * tcp_nuke_addr - destroy all sockets on the given local address
+ * if local address is the unspecified address (0.0.0.0 or ::), destroy all
+ * sockets with local addresses that are not configured.
+ */
+int tcp_nuke_addr(struct net *net, struct sockaddr *addr)
+{
+	int family = addr->sa_family;
+	unsigned int bucket;
+
+	struct in_addr *in = NULL;
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+	struct in6_addr *in6 = NULL;
+#endif
+	if (family == AF_INET) {
+		in = &((struct sockaddr_in *)addr)->sin_addr;
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+	} else if (family == AF_INET6) {
+		in6 = &((struct sockaddr_in6 *)addr)->sin6_addr;
+#endif
+	} else {
+		return -EAFNOSUPPORT;
+	}
+
+	for (bucket = 0; bucket < tcp_hashinfo.ehash_mask; bucket++) {
+		struct hlist_nulls_node *node;
+		struct sock *sk;
+		spinlock_t *lock = inet_ehash_lockp(&tcp_hashinfo, bucket);
+
+restart:
+		spin_lock_bh(lock);
+		sk_nulls_for_each(sk, node, &tcp_hashinfo.ehash[bucket].chain) {
+			struct inet_sock *inet = inet_sk(sk);
+
+			if (sysctl_ip_dynaddr && sk->sk_state == TCP_SYN_SENT)
+				continue;
+			if (sock_flag(sk, SOCK_DEAD))
+				continue;
+
+			if (family == AF_INET) {
+				__be32 s4 = inet->inet_rcv_saddr;
+				if (s4 == LOOPBACK4_IPV6)
+					continue;
+
+				if (in->s_addr != s4 &&
+				    !(in->s_addr == INADDR_ANY &&
+				      !tcp_is_local(net, s4)))
+					continue;
+			}
+
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+			if (family == AF_INET6) {
+				struct in6_addr *s6;
+				if (!inet->pinet6)
+					continue;
+
+				s6 = &inet->pinet6->rcv_saddr;
+				if (ipv6_addr_type(s6) == IPV6_ADDR_MAPPED)
+					continue;
+
+				if (!ipv6_addr_equal(in6, s6) &&
+				    !(ipv6_addr_equal(in6, &in6addr_any) &&
+				      !tcp_is_local6(net, s6)))
+				continue;
+			}
+#endif
+
+			sock_hold(sk);
+			spin_unlock_bh(lock);
+
+			local_bh_disable();
+			bh_lock_sock(sk);
+			sk->sk_err = ETIMEDOUT;
+			sk->sk_error_report(sk);
+
+			tcp_done(sk);
+			bh_unlock_sock(sk);
+			local_bh_enable();
+			sock_put(sk);
+
+			goto restart;
+		}
+		spin_unlock_bh(lock);
+	}
+
+	return 0;
 }

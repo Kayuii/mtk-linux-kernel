@@ -140,6 +140,24 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
 	POWER_SUPPLY_PROP_TYPE, /* use power_supply.type instead */
 	POWER_SUPPLY_PROP_SCOPE,
+	/* Local extensions */
+	POWER_SUPPLY_PROP_USB_HC,
+	POWER_SUPPLY_PROP_USB_OTG,
+	POWER_SUPPLY_PROP_CHARGE_ENABLED,
+	POWER_SUPPLY_PROP_batt_vol,
+	POWER_SUPPLY_PROP_batt_temp,
+	/* 20100723 Add for EM */
+	POWER_SUPPLY_PROP_TemperatureR,
+	POWER_SUPPLY_PROP_TempBattVoltage,
+	POWER_SUPPLY_PROP_InstatVolt,
+	POWER_SUPPLY_PROP_BatteryAverageCurrent,
+	POWER_SUPPLY_PROP_BatterySenseVoltage,
+	POWER_SUPPLY_PROP_ISenseVoltage,
+	POWER_SUPPLY_PROP_ChargerVoltage,
+
+	POWER_SUPPLY_PROP_status_2nd,
+	POWER_SUPPLY_PROP_capacity_2nd,
+	POWER_SUPPLY_PROP_present_2nd,
 	/* Properties of type `const char *' */
 	POWER_SUPPLY_PROP_MODEL_NAME,
 	POWER_SUPPLY_PROP_MANUFACTURER,
@@ -155,6 +173,7 @@ enum power_supply_type {
 	POWER_SUPPLY_TYPE_USB_DCP,	/* Dedicated Charging Port */
 	POWER_SUPPLY_TYPE_USB_CDP,	/* Charging Downstream Port */
 	POWER_SUPPLY_TYPE_USB_ACA,	/* Accessory Charger Adapters */
+	POWER_SUPPLY_TYPE_WIRELESS, /* Wireless Charger */
 };
 
 union power_supply_propval {
@@ -194,6 +213,8 @@ struct power_supply {
 	/* private */
 	struct device *dev;
 	struct work_struct changed_work;
+	spinlock_t changed_lock;
+	bool changed;
 #ifdef CONFIG_THERMAL
 	struct thermal_zone_device *tzd;
 	struct thermal_cooling_device *tcd;

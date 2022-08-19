@@ -1,4 +1,4 @@
 config SND_SIMPLE_CARD
-	tristate
+	tristate "ASoC Simple sound card support"
 	help
 	  This option enables generic simple sound card support

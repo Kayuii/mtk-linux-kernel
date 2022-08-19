@@ -193,9 +193,6 @@ exit:
 void usb_hub_remove_port_device(struct usb_hub *hub,
 				       int port1)
 {
-#if defined (CONFIG_RALINK_MT7621)
-	if (hub->ports[port1 - 1])
-#endif
-		device_unregister(&hub->ports[port1 - 1]->dev);
+	device_unregister(&hub->ports[port1 - 1]->dev);
 }
 

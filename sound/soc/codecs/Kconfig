@@ -9,6 +9,7 @@ config SND_SOC_I2C_AND_SPI
 	default y if SPI_MASTER=y
 
 config SND_SOC_ALL_CODECS
+#	tristate "Build all ASoC CODEC drivers"
 	tristate
 	select SND_SOC_88PM860X if MFD_88PM860X
 	select SND_SOC_L3
@@ -45,6 +46,7 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_JZ4740_CODEC
 	select SND_SOC_LM4857 if I2C
 	select SND_SOC_LM49453 if I2C
+	select SND_SOC_MAX97236 if I2C
 	select SND_SOC_MAX98088 if I2C
 	select SND_SOC_MAX98090 if I2C
 	select SND_SOC_MAX98095 if I2C
@@ -269,6 +271,9 @@ config SND_SOC_DFBMCS320
 config SND_SOC_DMIC
 	tristate
 
+config SND_SOC_MAX97236
+	tristate
+
 config SND_SOC_ISABELLE
         tristate
 
@@ -414,6 +419,9 @@ config SND_SOC_WM8737
 config SND_SOC_WM8741
 	tristate
 
+config SND_SOC_WM8750
+	tristate
+
 config SND_SOC_WM8753
 	tristate
 
@@ -443,6 +451,19 @@ config SND_SOC_WM8940
 
 config SND_SOC_WM8955
 	tristate
+
+#config SND_SOC_WM8960
+#	tristate
+
+choice
+	prompt "WM Codec Support Select"
+	depends on RALINK_GDMA
+	depends on SND_MT76XX_SOC
+	default SND_SOC_WM8960
+	config SND_SOC_WM8960
+		select REGMAP
+       		bool "Build WM8960 CODEC drivers"	
+endchoice
 
 config SND_SOC_WM8961
 	tristate
@@ -500,17 +521,7 @@ config SND_SOC_WM9712
 
 config SND_SOC_WM9713
 	tristate
-choice
-	prompt "WM Codec Support Select"
-	depends on RALINK_GDMA
-	default SND_SOC_WM8960
-	config SND_SOC_WM8750
-		bool "Build WM8750 CODEC drivers"
-	config SND_SOC_WM8960
-		select REGMAP
-		select REGMAP_I2C
-		bool "Build WM8960 CODEC drivers"
-endchoice
+
 # Amp
 config SND_SOC_LM4857
 	tristate

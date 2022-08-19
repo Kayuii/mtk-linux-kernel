@@ -504,6 +504,16 @@ static inline void debug_work_activate(struct work_struct *work) { }
 static inline void debug_work_deactivate(struct work_struct *work) { }
 #endif
 
+int hotplug_mode = 0;
+int hotplug_cpu = 0;
+
+#ifdef CONFIG_MTK_WQ_DEBUG
+extern void mttrace_workqueue_execute_work(struct work_struct *work);
+extern void mttrace_workqueue_activate_work(struct work_struct *work);
+extern void mttrace_workqueue_queue_work(unsigned int req_cpu, struct work_struct *work);
+extern void mttrace_workqueue_execute_end(struct work_struct *work);
+#endif //CONFIG_MTK_WQ_DEBUG
+
 /* allocate ID and assign it to @pool */
 static int worker_pool_assign_id(struct worker_pool *pool)
 {
@@ -1074,6 +1084,9 @@ static void pwq_activate_delayed_work(struct work_struct *work)
 	struct pool_workqueue *pwq = get_work_pwq(work);
 
 	trace_workqueue_activate_work(work);
+#ifdef CONFIG_MTK_WQ_DEBUG
+	mttrace_workqueue_activate_work(work);
+#endif //CONFIG_MTK_WQ_DEBUG
 	move_linked_works(work, &pwq->pool->worklist, NULL);
 	__clear_bit(WORK_STRUCT_DELAYED_BIT, work_data_bits(work));
 	pwq->nr_active++;
@@ -1309,6 +1322,9 @@ static void __queue_work(int cpu, struct workqueue_struct *wq,
 retry:
 	if (req_cpu == WORK_CPU_UNBOUND)
 		cpu = raw_smp_processor_id();
+    
+    if (hotplug_mode == 1)
+        cpu = 0;
 
 	/* pwq which will be used unless @work is executing elsewhere */
 	if (!(wq->flags & WQ_UNBOUND))
@@ -1361,6 +1377,9 @@ retry:
 
 	/* pwq determined, queue */
 	trace_workqueue_queue_work(req_cpu, pwq, work);
+#ifdef CONFIG_MTK_WQ_DEBUG
+	mttrace_workqueue_queue_work(cpu, work);
+#endif //CONFIG_MTK_WQ_DEBUG
 
 	if (WARN_ON(!list_empty(&work->entry))) {
 		spin_unlock(&pwq->pool->lock);
@@ -1372,6 +1391,9 @@ retry:
 
 	if (likely(pwq->nr_active < pwq->max_active)) {
 		trace_workqueue_activate_work(work);
+#ifdef CONFIG_MTK_WQ_DEBUG
+		mttrace_workqueue_activate_work(work);
+#endif //CONFIG_MTK_WQ_DEBUG
 		pwq->nr_active++;
 		worklist = &pwq->pool->worklist;
 	} else {
@@ -1445,6 +1467,9 @@ static void __queue_delayed_work(int cpu, struct workqueue_struct *wq,
 	}
 
 	timer_stats_timer_set_start_info(&dwork->timer);
+
+    if(hotplug_mode == 1)
+        cpu = 0;
 
 	dwork->wq = wq;
 	dwork->cpu = cpu;
@@ -2170,12 +2195,18 @@ __acquires(&pool->lock)
 	lock_map_acquire_read(&pwq->wq->lockdep_map);
 	lock_map_acquire(&lockdep_map);
 	trace_workqueue_execute_start(work);
+#ifdef CONFIG_MTK_WQ_DEBUG
+	mttrace_workqueue_execute_work(work);
+#endif //CONFIG_MTK_WQ_DEBUG
 	worker->current_func(work);
 	/*
 	 * While we must be careful to not use "work" after this, the trace
 	 * point will only record its address.
 	 */
 	trace_workqueue_execute_end(work);
+#ifdef CONFIG_MTK_WQ_DEBUG
+	mttrace_workqueue_execute_end(work);
+#endif //CONFIG_MTK_WQ_DEBUG
 	lock_map_release(&lockdep_map);
 	lock_map_release(&pwq->wq->lockdep_map);
 
@@ -4497,8 +4528,9 @@ static void wq_unbind_fn(struct work_struct *work)
 	struct worker *worker;
 	int wi;
 
+    cpu = hotplug_cpu;
 	for_each_cpu_worker_pool(pool, cpu) {
-		WARN_ON_ONCE(cpu != smp_processor_id());
+		/*WARN_ON_ONCE(cpu != smp_processor_id());*/
 
 		mutex_lock(&pool->manager_mutex);
 		spin_lock_irq(&pool->lock);
@@ -4711,6 +4743,8 @@ static int __cpuinit workqueue_cpu_down_callback(struct notifier_block *nfb,
 
 	switch (action & ~CPU_TASKS_FROZEN) {
 	case CPU_DOWN_PREPARE:
+        hotplug_mode = 1;
+        hotplug_cpu = cpu;
 		/* unbinding per-cpu workers should happen on the local CPU */
 		INIT_WORK_ONSTACK(&unbind_work, wq_unbind_fn);
 		queue_work_on(cpu, system_highpri_wq, &unbind_work);

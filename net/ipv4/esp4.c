@@ -29,7 +29,7 @@ ipsec_esp_input(
 	struct xfrm_state *x, 
 	struct sk_buff *skb
 );
-#else
+#endif
 struct esp_skb_cb {
 	struct xfrm_skb_cb xfrm;
 	void *tmp;
@@ -468,7 +468,6 @@ static int esp_input(struct xfrm_state *x, struct sk_buff *skb)
 out:
 	return err;
 }
-#endif /* #if defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE) */
 
 static u32 esp4_get_mtu(struct xfrm_state *x, int mtu)
 {

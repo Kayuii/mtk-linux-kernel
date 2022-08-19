@@ -402,9 +402,6 @@ int __inode_permission(struct inode *inode, int mask)
 
 	return security_inode_permission(inode, mask);
 }
-#if defined(CONFIG_SUPPORT_OPENWRT)
-EXPORT_SYMBOL(__inode_permission);
-#endif
 
 /**
  * sb_permission - Check superblock-level permissions
@@ -2870,17 +2867,9 @@ finish_open_created:
 	error = may_open(&nd->path, acc_mode, open_flag);
 	if (error)
 		goto out;
-#if defined(CONFIG_SUPPORT_OPENWRT)
-	BUG_ON(*opened & FILE_OPENED); /* once it's opened, it's opened */
-	error = vfs_open(&nd->path, file, current_cred());
-	if (!error) {
-		*opened |= FILE_OPENED;
-	} else {
-#else
 	file->f_path.mnt = nd->path.mnt;
 	error = finish_open(file, nd->path.dentry, NULL, opened);
 	if (error) {
-#endif
 		if (error == -EOPENSTALE)
 			goto stale_open;
 		goto out;

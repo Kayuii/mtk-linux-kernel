@@ -428,8 +428,3 @@ config ETH_WIFI_OOM_DEBUG
 bool	"ETH WIFI OOM DEBUG"
 default n
 
-config MOCA_SUPPORT
-bool "Moca Support"
-depends on RAETH && RALINK_MT7621
-select SYSVIPC
-

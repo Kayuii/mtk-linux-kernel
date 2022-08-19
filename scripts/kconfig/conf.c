@@ -112,6 +112,8 @@ static int conf_askvalue(struct symbol *sym, const char *def)
 		fflush(stdout);
 #if 0
 		xfgets(line, 128, stdin);
+		if (!tty_stdio)
+			printf("\n");
 #else
 		switch (sym->type) {
 		case S_INT:

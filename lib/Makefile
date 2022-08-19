@@ -2,16 +2,6 @@
 # Makefile for some libs needed in the kernel.
 #
 
-ifdef CONFIG_JFFS2_ZLIB
-	CONFIG_ZLIB_INFLATE:=y
-	CONFIG_ZLIB_DEFLATE:=y
-endif
-
-ifdef CONFIG_JFFS2_LZMA
-	CONFIG_LZMA_DECOMPRESS:=y
-	CONFIG_LZMA_COMPRESS:=y
-endif
-
 ifdef CONFIG_FUNCTION_TRACER
 ORIG_CFLAGS := $(KBUILD_CFLAGS)
 KBUILD_CFLAGS = $(subst -pg,,$(ORIG_CFLAGS))
@@ -87,8 +77,6 @@ obj-$(CONFIG_LZO_COMPRESS) += lzo/
 obj-$(CONFIG_LZO_DECOMPRESS) += lzo/
 obj-$(CONFIG_XZ_DEC) += xz/
 obj-$(CONFIG_RAID6_PQ) += raid6/
-obj-$(CONFIG_LZMA_COMPRESS) += lzma/
-obj-$(CONFIG_LZMA_DECOMPRESS) += lzma/
 
 lib-$(CONFIG_DECOMPRESS_GZIP) += decompress_inflate.o
 lib-$(CONFIG_DECOMPRESS_BZIP2) += decompress_bunzip2.o
@@ -191,3 +179,6 @@ quiet_cmd_build_OID_registry = GEN     $@
 clean-files	+= oid_registry_data.c
 
 obj-$(CONFIG_UCS2_STRING) += ucs2_string.o
+
+obj-$(CONFIG_LZ4K) += lz4k/
+

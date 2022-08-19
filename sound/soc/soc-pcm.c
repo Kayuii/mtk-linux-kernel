@@ -449,7 +449,7 @@ static int soc_pcm_prepare(struct snd_pcm_substream *substream)
 			goto out;
 		}
 	}
-#ifndef CONFIG_SND_RALINK_SOC
+
 	if (platform->driver->ops && platform->driver->ops->prepare) {
 		ret = platform->driver->ops->prepare(substream);
 		if (ret < 0) {
@@ -458,7 +458,7 @@ static int soc_pcm_prepare(struct snd_pcm_substream *substream)
 			goto out;
 		}
 	}
-#endif
+
 	if (codec_dai->driver->ops->prepare) {
 		ret = codec_dai->driver->ops->prepare(substream, codec_dai);
 		if (ret < 0) {
@@ -476,16 +476,7 @@ static int soc_pcm_prepare(struct snd_pcm_substream *substream)
 			goto out;
 		}
 	}
-#ifdef CONFIG_SND_RALINK_SOC
-	if (platform->driver->ops && platform->driver->ops->prepare) {
-		ret = platform->driver->ops->prepare(substream);
-		if (ret < 0) {
-			dev_err(platform->dev, "ASoC: platform prepare error:"
-				" %d\n", ret);
-			goto out;
-		}
-	}
-#endif
+
 	/* cancel any delayed stream shutdown that is pending */
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
 	    rtd->pop_wait) {

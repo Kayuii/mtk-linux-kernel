@@ -19,8 +19,13 @@
 #include <linux/mutex.h>
 #include <linux/gfp.h>
 #include <linux/suspend.h>
+#ifdef CONFIG_MT_LOAD_BALANCE_PROFILER
+#include <mtlbprof/mtlbprof.h>
+#endif
 
 #include "smpboot.h"
+
+atomic_t is_in_hotplug = ATOMIC_INIT(0);
 
 #ifdef CONFIG_SMP
 /* Serializes the updates to cpu_online_mask, cpu_present_mask */
@@ -125,10 +130,14 @@ static void cpu_hotplug_begin(void)
 		mutex_unlock(&cpu_hotplug.lock);
 		schedule();
 	}
+
+	atomic_inc(&is_in_hotplug);
 }
 
 static void cpu_hotplug_done(void)
 {
+	atomic_dec(&is_in_hotplug);
+
 	cpu_hotplug.active_writer = NULL;
 	mutex_unlock(&cpu_hotplug.lock);
 }
@@ -330,6 +339,10 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen)
 	while (!idle_cpu(cpu))
 		cpu_relax();
 
+#ifdef CONFIG_MT_LOAD_BALANCE_PROFILER
+	mt_lbprof_update_state(cpu, MT_LBPROF_HOTPLUG_STATE);
+#endif
+
 	/* This actually kills the CPU. */
 	__cpu_die(cpu);
 
@@ -514,6 +527,7 @@ int disable_nonboot_cpus(void)
 	cpu_maps_update_done();
 	return error;
 }
+EXPORT_SYMBOL_GPL(disable_nonboot_cpus);
 
 void __weak arch_enable_nonboot_cpus_begin(void)
 {
@@ -552,6 +566,7 @@ void __ref enable_nonboot_cpus(void)
 out:
 	cpu_maps_update_done();
 }
+EXPORT_SYMBOL_GPL(enable_nonboot_cpus);
 
 static int __init alloc_frozen_cpus(void)
 {
@@ -726,3 +741,23 @@ void init_cpu_online(const struct cpumask *src)
 {
 	cpumask_copy(to_cpumask(cpu_online_bits), src);
 }
+
+static ATOMIC_NOTIFIER_HEAD(idle_notifier);
+
+void idle_notifier_register(struct notifier_block *n)
+{
+	atomic_notifier_chain_register(&idle_notifier, n);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_register);
+
+void idle_notifier_unregister(struct notifier_block *n)
+{
+	atomic_notifier_chain_unregister(&idle_notifier, n);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_unregister);
+
+void idle_notifier_call_chain(unsigned long val)
+{
+	atomic_notifier_call_chain(&idle_notifier, val, NULL);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_call_chain);

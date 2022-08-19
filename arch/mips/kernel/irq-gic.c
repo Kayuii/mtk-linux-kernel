@@ -29,12 +29,7 @@ unsigned int gic_irq_flags[GIC_NUM_INTRS];
 /* The index into this array is the vector # of the interrupt. */
 struct gic_shared_intr_map gic_shared_intr_map[GIC_NUM_INTRS];
 
-#ifdef CONFIG_RALINK_MT7621
-struct gic_pcpu_mask pcpu_masks[NR_CPUS];
-#else 
 static struct gic_pcpu_mask pcpu_masks[NR_CPUS];
-#endif
-
 static struct gic_pending_regs pending_regs[NR_CPUS];
 static struct gic_intrmask_regs intrmask_regs[NR_CPUS];
 
@@ -224,15 +219,16 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *cpumask,
 
 	/* Assumption : cpumask refers to a single CPU */
 	spin_lock_irqsave(&gic_lock, flags);
+	for (;;) {
+		/* Re-route this IRQ */
+		GIC_SH_MAP_TO_VPE_SMASK(irq, first_cpu(tmp));
 
-	/* Re-route this IRQ */
-	GIC_SH_MAP_TO_VPE_SMASK(irq, first_cpu(tmp));
+		/* Update the pcpu_masks */
+		for (i = 0; i < NR_CPUS; i++)
+			clear_bit(irq, pcpu_masks[i].pcpu_mask);
+		set_bit(irq, pcpu_masks[first_cpu(tmp)].pcpu_mask);
 
-	/* Update the pcpu_masks */
-	for (i = 0; i < NR_CPUS; i++)
-		clear_bit(irq, pcpu_masks[i].pcpu_mask);
-	set_bit(irq, pcpu_masks[first_cpu(tmp)].pcpu_mask);
-
+	}
 	cpumask_copy(d->affinity, cpumask);
 	spin_unlock_irqrestore(&gic_lock, flags);
 
@@ -260,13 +256,11 @@ static void __init gic_setup_intr(unsigned int intr, unsigned int cpu,
 
 	/* Setup Intr to Pin mapping */
 	if (pin & GIC_MAP_TO_NMI_MSK) {
-		int i;
-
 		GICWRITE(GIC_REG_ADDR(SHARED, GIC_SH_MAP_TO_PIN(intr)), pin);
 		/* FIXME: hack to route NMI to all cpu's */
-		for (i = 0; i < NR_CPUS; i += 32) {
+		for (cpu = 0; cpu < NR_CPUS; cpu += 32) {
 			GICWRITE(GIC_REG_ADDR(SHARED,
-					  GIC_SH_MAP_TO_VPE_REG_OFF(intr, i)),
+					  GIC_SH_MAP_TO_VPE_REG_OFF(intr, cpu)),
 				 0xffffffff);
 		}
 	} else {

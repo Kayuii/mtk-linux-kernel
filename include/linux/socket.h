@@ -257,12 +257,15 @@ struct ucred {
 #define MSG_CMSG_CLOEXEC 0x40000000	/* Set close_on_exit for file
 					   descriptor received through
 					   SCM_RIGHTS */
-#define MSG_NETSPLICE		0x40000
-#define MSG_NOCATCHSIGNAL	0x80000
 #if defined(CONFIG_COMPAT)
 #define MSG_CMSG_COMPAT	0x80000000	/* This message needs 32 bit fixups */
 #else
 #define MSG_CMSG_COMPAT	0		/* We never have 32 bit fixups */
+#endif
+
+#ifdef CONFIG_SPLICE_NET_SUPPORT
+#define MSG_KERNSPACE          0x40000
+#define MSG_NOCATCHSIGNAL      0x80000
 #endif
 
 
@@ -305,10 +308,9 @@ struct ucred {
 /* IPX options */
 #define IPX_TYPE	1
 
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
+#ifdef CONFIG_SPLICE_NET_SUPPORT
 extern void memcpy_tokerneliovec(struct iovec *iov, unsigned char *kdata, int len);
 #endif
-
 extern void cred_to_ucred(struct pid *pid, const struct cred *cred, struct ucred *ucred);
 
 extern int memcpy_fromiovecend(unsigned char *kdata, const struct iovec *iov,

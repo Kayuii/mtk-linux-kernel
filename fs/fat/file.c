@@ -174,7 +174,7 @@ const struct file_operations fat_file_operations = {
 #endif
 	.fsync		= fat_file_fsync,
 	.splice_read	= generic_file_splice_read,
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
+#if defined(CONFIG_SPLICE_NET_SUPPORT)
 	.splice_from_socket = generic_splice_from_socket,
 #endif
 };

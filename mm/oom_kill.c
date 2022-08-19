@@ -441,6 +441,17 @@ void oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		list_for_each_entry(child, &t->children, sibling) {
 			unsigned int child_points;
 
+            /*LCH add for race condition*/
+            if (p->flags & PF_EXITING) {
+                read_unlock(&tasklist_lock);
+                task_lock(p);
+                pr_err("%s: process %d (%s) is exiting\n", message, task_pid_nr(p), p->comm);
+                task_unlock(p);
+                set_tsk_thread_flag(p, TIF_MEMDIE);
+                put_task_struct(p);
+		        return;
+            }
+
 			if (child->mm == p->mm)
 				continue;
 			/*
@@ -636,6 +647,11 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask,
 	wifi_dump_info();
 #endif	/* CONFIG_CHIP_MT7615E */
 #endif	/* CONFIG_ETH_WIFI_OOM_DEBUG */
+
+#ifdef CONFIG_MT_ENG_BUILD
+	//void add_kmem_status_oom_counter(void);
+	//add_kmem_status_oom_counter();
+#endif
 
 	blocking_notifier_call_chain(&oom_notify_list, 0, &freed);
 	if (freed > 0)

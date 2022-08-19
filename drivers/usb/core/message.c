@@ -385,7 +385,14 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 
 	urb_flags = URB_NO_INTERRUPT;
 	if (usb_pipein(pipe))
+	//Added for Rx DMA mode1, ReqMode1 enable
+	{
+	//Added for Rx DMA mode1, ReqMode1 enable
 		urb_flags |= URB_SHORT_NOT_OK;
+	//Added for Rx DMA mode1, ReqMode1 enable
+		urb_flags |= URB_RX_REQ_MODE0_ENABLE;
+	}
+	//Added for Rx DMA mode1, ReqMode1 enable
 
 	for_each_sg(sg, sg, io->entries, i) {
 		struct urb *urb;
@@ -1903,10 +1910,9 @@ free_interfaces:
 			continue;
 		}
 		create_intf_ep_devs(intf);
-
+	
 		if (device_is_registered(&intf->dev) == 1 && intf->dev.driver)
 			shout_out_for_no_silent_failure = 0;
-
 	}
 
 	/* USB-IF Embedded Host Compliance Plan */

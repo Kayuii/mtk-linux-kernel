@@ -20,16 +20,15 @@ header-y += netfilter_ipv4/
 header-y += netfilter_ipv6/
 header-y += usb/
 header-y += wimax/
+header-y += vcodec/
+header-y += dpframework/
+header-y += camera/
 
 genhdr-y += version.h
 
 ifneq ($(wildcard $(srctree)/arch/$(SRCARCH)/include/uapi/asm/a.out.h \
 		  $(srctree)/arch/$(SRCARCH)/include/asm/a.out.h),)
 header-y += a.out.h
-endif
-
-ifndef CONFIG_SUPPORT_OPENWRT
-header-y += autoconf.h
 endif
 
 header-y += acct.h

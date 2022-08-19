@@ -22,6 +22,7 @@
 #include "../nat/hw_nat/ra_nat.h"
 #endif
 
+
 static int xfrm_output2(struct sk_buff *skb);
 #if defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE)
 int xfrm_skb_check_space(struct sk_buff *skb)
@@ -104,26 +105,18 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 
 		err = x->type->output(x, skb);
 #if defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE)
-		if (skb->protocol == htons(ETH_P_IP))
-		{	
-			if (err == 1)
-				return err;
-		}		
+		if (err == 1)
+			return err;
 #endif	
 		if (err == -EINPROGRESS)
 			goto out_exit;
 
 resume:
-#if defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE)
-		if (skb->protocol == htons(ETH_P_IPV6))
-#else	
-		{
 		if (err) {
 			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTSTATEPROTOERROR);
 			goto error_nolock;
 		}
-		}
-#endif
+
 		dst = skb_dst_pop(skb);
 		if (!dst) {
 			XFRM_INC_STATS(net, LINUX_MIB_XFRMOUTERROR);
@@ -164,12 +157,13 @@ int xfrm_output_resume(struct sk_buff *skb, int err)
 			goto out;
 	}
 
-	if (err == -EINPROGRESS)
-		err = 0;
 #if defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE)
-	if (skb->protocol = htons(ETH_P_IP))
+	if (err == 1)
 		return 0;
 #endif	
+	if (err == -EINPROGRESS)
+		err = 0;
+
 out:
 	return err;
 }

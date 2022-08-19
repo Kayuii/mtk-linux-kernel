@@ -220,7 +220,6 @@ static int cpufreq_stats_create_table(struct cpufreq_policy *policy,
 		goto error_out;
 
 	stat->cpu = cpu;
-	per_cpu(cpufreq_stats_table, cpu) = stat;
 
 	for (i = 0; table[i].frequency != CPUFREQ_TABLE_END; i++) {
 		unsigned int freq = table[i].frequency;
@@ -258,6 +257,10 @@ static int cpufreq_stats_create_table(struct cpufreq_policy *policy,
 	stat->last_time = get_jiffies_64();
 	stat->last_index = freq_table_get_index(stat, policy->cur);
 	spin_unlock(&cpufreq_stats_lock);
+
+    // Assign stat after stat's frequency table is initialized.
+    per_cpu(cpufreq_stats_table, cpu) = stat;
+
 	cpufreq_cpu_put(data);
 	return 0;
 error_out:
@@ -341,6 +344,27 @@ static int cpufreq_stat_notifier_trans(struct notifier_block *nb,
 	return 0;
 }
 
+static int cpufreq_stats_create_table_cpu(unsigned int cpu)
+{
+	struct cpufreq_policy *policy;
+	struct cpufreq_frequency_table *table;
+	int ret = -ENODEV;
+
+	policy = cpufreq_cpu_get(cpu);
+	if (!policy)
+		return -ENODEV;
+
+	table = cpufreq_frequency_get_table(cpu);
+	if (!table)
+		goto out;
+
+	ret = cpufreq_stats_create_table(policy, table);
+
+out:
+	cpufreq_cpu_put(policy);
+	return ret;
+}
+
 static int __cpuinit cpufreq_stat_cpu_callback(struct notifier_block *nfb,
 					       unsigned long action,
 					       void *hcpu)
@@ -359,6 +383,10 @@ static int __cpuinit cpufreq_stat_cpu_callback(struct notifier_block *nfb,
 	case CPU_DEAD:
 	case CPU_DEAD_FROZEN:
 		cpufreq_stats_free_table(cpu);
+		break;
+	case CPU_DOWN_FAILED:
+	case CPU_DOWN_FAILED_FROZEN:
+		cpufreq_stats_create_table_cpu(cpu);
 		break;
 	}
 	return NOTIFY_OK;

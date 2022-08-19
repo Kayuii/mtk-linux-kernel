@@ -4,18 +4,19 @@
 
 menu "Character devices"
 
-config RALINK_GPIO
-	bool "Ralink GPIO Support"
-	default y
+config MEDIATEK_GPIO
+	tristate "Mediatek GPIO Support"
+	default n
 
-config RALINK_GPIO_LED
-	bool "Ralink GPIO LED Support"
-	depends on RALINK_GPIO
-	default y
+config MEDIATEK_GPIO_LED
+	bool "Mediatek GPIO LED Support"
+	depends on MEDIATEK_GPIO
+	default n
+
 	
 config RALINK_HSDMA
   tristate "Ralink HSDMA Support"
-  depends on RALINK_MT7621
+  depends on RALINK_MT7621 || ARCH_MT7623
 	default n
 
 config RALINK_GDMA
@@ -75,6 +76,8 @@ config RALINK_SLIC_CONNECT_SPI_CS1
 config RALINK_I2C
 	tristate "Ralink RT2880 I2C Support"
 	default n
+
+source "drivers/char/i2s/Kconfig"
 
 config MTK_NFC_SUPPORT
         depends on RALINK_I2C
@@ -159,27 +162,20 @@ config RALINK_PCMSLOTMODE
 	---help---
 	PCM slot mode : 0 for 4 slots, 1 for 8 slots, 2 for 16 slots, 3 for 32 slots, 4 for 64 slots, and 5 for 128 slots.
 
-choice 
-	prompt "UARTF_SHARE_MODE Setting"
-	depends on RALINK_PCM
-	default RALINK_PCMGPIO
-	
-	config RALINK_PCMGPIO
-		bool "PCM+GPIO mode"
-	config RALINK_PCMUARTF
-		bool "PCM+UARTF mode"
-	config RALINK_PCMI2S
-		bool "PCM+I2S mode"
-endchoice
-
-source "drivers/char/i2s/Kconfig"
-
-config RALINK_SPDIF
-        tristate "Ralink SPDIF Support"
-        depends on RALINK_MT7621
-        default n
-
 source "drivers/tty/Kconfig"
+
+config DEVMEM
+	bool "Memory device driver"
+	default y
+	help
+	  The memory driver provides two character devices, mem and kmem, which
+	  provide access to the system's memory. The mem device is a view of
+	  physical memory, and each byte in the device corresponds to the
+	  matching physical address. The kmem device is the same as mem, but
+	  the addresses correspond to the kernel's virtual address space rather
+	  than physical memory. These devices are standard parts of a Linux
+	  system and most users should say Y here. You might say N if very
+	  security conscience or memory is tight.
 
 config DEVKMEM
 	bool "/dev/kmem virtual device support"
@@ -201,6 +197,9 @@ config STALDRV
 	  questions.  Make sure to read <file:Documentation/serial/stallion.txt>
 	  in this case.  If you have never heard about all this, it's safe to
 	  say N.
+
+        default y
+
 
 config SGI_SNSC
 	bool "SGI Altix system controller communication support"
@@ -758,6 +757,10 @@ config DEVPORT
 	depends on !M68K
 	depends on ISA || PCI
 	default y
+
+config DCC_TTY
+	tristate "DCC tty driver"
+	depends on ARM
 
 source "drivers/s390/char/Kconfig"
 

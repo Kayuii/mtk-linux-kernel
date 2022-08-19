@@ -108,6 +108,7 @@ unsigned int dirty_expire_interval = 30 * 100; /* centiseconds */
  * Flag that makes the machine dump writes/reads and block dirtyings.
  */
 int block_dump;
+EXPORT_SYMBOL_GPL(block_dump);
 
 /*
  * Flag that puts the machine in "laptop mode". Doubles as a timeout in jiffies:
@@ -193,13 +194,21 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
 #ifdef CONFIG_HIGHMEM
 	int node;
 	unsigned long x = 0;
+	unsigned long tmp = 0;
 
 	for_each_node_state(node, N_HIGH_MEMORY) {
 		struct zone *z =
 			&NODE_DATA(node)->node_zones[ZONE_HIGHMEM];
 
-		x += zone_page_state(z, NR_FREE_PAGES) +
-		     zone_reclaimable_pages(z) - z->dirty_balance_reserve;
+		// fix overflow issue
+		tmp = zone_page_state(z, NR_FREE_PAGES) +
+		     zone_reclaimable_pages(z);
+		if (tmp > z->dirty_balance_reserve)
+		    x += tmp - z->dirty_balance_reserve;
+		else 
+		    continue;
+		//x += zone_page_state(z, NR_FREE_PAGES) +
+		//     zone_reclaimable_pages(z) - z->dirty_balance_reserve;
 	}
 	/*
 	 * Unreclaimable memory (kernel memory or anonymous memory
@@ -1104,11 +1113,11 @@ static unsigned long dirty_poll_interval(unsigned long dirty,
 	return 1;
 }
 
-static long bdi_max_pause(struct backing_dev_info *bdi,
-			  unsigned long bdi_dirty)
+static unsigned long bdi_max_pause(struct backing_dev_info *bdi,
+				   unsigned long bdi_dirty)
 {
-	long bw = bdi->avg_write_bandwidth;
-	long t;
+	unsigned long bw = bdi->avg_write_bandwidth;
+	unsigned long t;
 
 	/*
 	 * Limit pause time for small memory systems. If sleeping for too long
@@ -1120,7 +1129,7 @@ static long bdi_max_pause(struct backing_dev_info *bdi,
 	t = bdi_dirty / (1 + bw / roundup_pow_of_two(1 + HZ / 8));
 	t++;
 
-	return min_t(long, t, MAX_PAUSE);
+	return min_t(unsigned long, t, MAX_PAUSE);
 }
 
 static long bdi_min_pause(struct backing_dev_info *bdi,

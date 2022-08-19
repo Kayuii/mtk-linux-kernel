@@ -365,11 +365,7 @@ static inline map_word map_word_load_partial(struct map_info *map, map_word orig
 			bitpos = (map_bankwidth(map)-1-i)*8;
 #endif
 			orig.x[0] &= ~(0xff << bitpos);
-#if defined(CONFIG_SUPPORT_OPENWRT)
-			orig.x[0] |= (unsigned long)buf[i-start] << bitpos;
-#else
 			orig.x[0] |= buf[i-start] << bitpos;
-#endif
 		}
 	}
 	return orig;
@@ -388,11 +384,7 @@ static inline map_word map_word_ff(struct map_info *map)
 
 	if (map_bankwidth(map) < MAP_FF_LIMIT) {
 		int bw = 8 * map_bankwidth(map);
-#if defined(CONFIG_SUPPORT_OPENWRT)
-		r.x[0] = (1UL << bw) - 1;
-#else
 		r.x[0] = (1 << bw) - 1;
-#endif
 	} else {
 		for (i=0; i<map_words(map); i++)
 			r.x[i] = ~0UL;

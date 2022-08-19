@@ -456,9 +456,6 @@ struct sk_buff {
 	__be16			protocol;
 
 	void			(*destructor)(struct sk_buff *skb);
-#if defined(CONFIG_RAETH_SKB_RECYCLE_2K)
-	int                     (*skb_recycling_callback)(struct sk_buff *skb);
-#endif
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 	struct nf_conntrack	*nfct;
 #endif
@@ -1325,6 +1322,11 @@ static inline int skb_pagelen(const struct sk_buff *skb)
 	return len + skb_headlen(skb);
 }
 
+static inline bool skb_has_frags(const struct sk_buff *skb)
+{
+	return skb_shinfo(skb)->nr_frags;
+}
+
 /**
  * __skb_fill_page_desc - initialise a paged fragment in an skb
  * @skb: buffer containing fragment to be initialised
@@ -1866,7 +1868,7 @@ static inline int pskb_network_may_pull(struct sk_buff *skb, unsigned int len)
  */
 #ifndef NET_SKB_PAD
 #if defined (CONFIG_PPPOPPTP) || defined (CONFIG_PPPOL2TP)
-#define NET_SKB_PAD             128
+#define NET_SKB_PAD             96
 #define NET_SKB_PAD_ORIG        max(32, L1_CACHE_BYTES)
 #else
 #define NET_SKB_PAD             max(32, L1_CACHE_BYTES)
@@ -2466,15 +2468,14 @@ extern struct sk_buff *skb_recv_datagram(struct sock *sk, unsigned flags,
 					 int noblock, int *err);
 extern unsigned int    datagram_poll(struct file *file, struct socket *sock,
 				     struct poll_table_struct *wait);
+#ifdef CONFIG_SPLICE_NET_SUPPORT
+extern int             skb_copy_datagram_kernel_iovec(const struct sk_buff *from,
+						int offset, struct iovec *to,
+						int size);
+#endif
 extern int	       skb_copy_datagram_iovec(const struct sk_buff *from,
 					       int offset, struct iovec *to,
 					       int size);
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
-extern int		skb_copy_datagram_iovec_kernel(const struct sk_buff *from,
-						 int offset, struct iovec *to,
-						 int size);
-#endif
-
 extern int	       skb_copy_and_csum_datagram_iovec(struct sk_buff *skb,
 							int hlen,
 							struct iovec *iov);
@@ -2911,18 +2912,6 @@ static inline bool skb_is_gso_v6(const struct sk_buff *skb)
 	return skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6;
 }
 
-#if defined(CONFIG_RAETH_SKB_RECYCLE_2K)
-struct sk_buff *skbmgr_alloc_skb2k(void);
-int skbmgr_recycling_callback(struct sk_buff *skb);
-
-static inline struct sk_buff *skbmgr_dev_alloc_skb2k(void)
-{
-        struct sk_buff *skb = skbmgr_alloc_skb2k();
-        if (likely(skb))
-                skb_reserve(skb, NET_SKB_PAD);
-        return skb;
-}
-#endif
 extern void __skb_warn_lro_forwarding(const struct sk_buff *skb);
 
 static inline bool skb_warn_if_lro(const struct sk_buff *skb)

@@ -164,7 +164,10 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	mapping->a_ops = &empty_aops;
 	mapping->host = inode;
 	mapping->flags = 0;
-	mapping_set_gfp_mask(mapping, GFP_HIGHUSER_MOVABLE);
+
+        mapping_set_gfp_mask(mapping, (GFP_HIGHUSER_MOVABLE & ~__GFP_HIGHMEM) | __GFP_SLOWHIGHMEM);
+        //mapping_set_gfp_mask(mapping, GFP_HIGHUSER_MOVABLE);
+
 	mapping->private_data = NULL;
 	mapping->backing_dev_info = &default_backing_dev_info;
 	mapping->writeback_index = 0;
@@ -1498,7 +1501,7 @@ static int relatime_need_update(struct vfsmount *mnt, struct inode *inode,
  * This does the actual work of updating an inodes time or version.  Must have
  * had called mnt_want_write() before calling this.
  */
-int update_time(struct inode *inode, struct timespec *time, int flags)
+static int update_time(struct inode *inode, struct timespec *time, int flags)
 {
 	if (inode->i_op->update_time)
 		return inode->i_op->update_time(inode, time, flags);

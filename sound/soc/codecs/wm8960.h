@@ -11,7 +11,6 @@
 
 /* WM8960 register space */
 
-
 #define WM8960_CACHEREGNUM 	56
 
 #define WM8960_LINVOL		0x0
@@ -24,17 +23,17 @@
 #define WM8960_IFACE1		0x7
 #define WM8960_CLOCK2		0x8
 #define WM8960_IFACE2		0x9
-#define WM8960_LDAC		0xa
-#define WM8960_RDAC		0xb
+#define WM8960_LDAC			0xa
+#define WM8960_RDAC			0xb
 
 #define WM8960_RESET		0xf
-#define WM8960_3D		0x10
-#define WM8960_ALC1		0x11
-#define WM8960_ALC2		0x12
-#define WM8960_ALC3		0x13
+#define WM8960_3D			0x10
+#define WM8960_ALC1			0x11
+#define WM8960_ALC2			0x12
+#define WM8960_ALC3			0x13
 #define WM8960_NOISEG		0x14
-#define WM8960_LADC		0x15
-#define WM8960_RADC		0x16
+#define WM8960_LADC			0x15
+#define WM8960_RADC			0x16
 #define WM8960_ADDCTL1		0x17
 #define WM8960_ADDCTL2		0x18
 #define WM8960_POWER1		0x19
@@ -52,7 +51,7 @@
 #define WM8960_MONOMIX2		0x27
 #define WM8960_LOUT2		0x28
 #define WM8960_ROUT2		0x29
-#define WM8960_MONO		0x2a
+#define WM8960_MONO			0x2a
 #define WM8960_INBMIX1		0x2b
 #define WM8960_INBMIX2		0x2c
 #define WM8960_BYPASS1		0x2d
@@ -62,10 +61,10 @@
 #define WM8960_CLASSD1		0x31
 
 #define WM8960_CLASSD3		0x33
-#define WM8960_PLL1		0x34
-#define WM8960_PLL2		0x35
-#define WM8960_PLL3		0x36
-#define WM8960_PLL4		0x37
+#define WM8960_PLL1			0x34
+#define WM8960_PLL2			0x35
+#define WM8960_PLL3			0x36
+#define WM8960_PLL4			0x37
 
 
 /*
@@ -107,16 +106,16 @@
 #define WM8960_OPCLK_DIV_2		(1 << 0)
 #define WM8960_OPCLK_DIV_3		(2 << 0)
 #define WM8960_OPCLK_DIV_4		(3 << 0)
-#define WM8960_OPCLK_DIV_5_5		(4 << 0)
+#define WM8960_OPCLK_DIV_5_5	(4 << 0)
 #define WM8960_OPCLK_DIV_6		(5 << 0)
 
 /*
  * WM8960 Power management
  */
-#define WM8960_PWR1_VMIDSEL_DISABLED    (0 << 7)
-#define WM8960_PWR1_VMIDSEL_50K         (1 << 7)
-#define WM8960_PWR1_VMIDSEL_250K        (2 << 7)
-#define WM8960_PWR1_VMIDSEL_5K          (3 << 7)
+#define WM8960_PWR1_VMIDSEL_DISABLED   	(0 << 7)
+#define WM8960_PWR1_VMIDSEL_50K        	(1 << 7)
+#define WM8960_PWR1_VMIDSEL_250K       	(2 << 7)
+#define WM8960_PWR1_VMIDSEL_5K         	(3 << 7)
 #define WM8960_PWR1_VREF                (1 << 6)
 #define WM8960_PWR1_AINL                (1 << 5)
 #define WM8960_PWR1_AINR                (1 << 4)
@@ -125,7 +124,7 @@
 #define WM8960_PWR1_MICB                (1 << 1)
 #define WM8960_PWR1_DIGENB              (1 << 0)
 
-#define WM8960_PWR2_DACL                (1 << 8)
+#define WM8960_PWR2_DACL               	(1 << 8)
 #define WM8960_PWR2_DACR                (1 << 7)
 //#define WM8960_PWR2_LOUT1               (1 << 6)
 //#define WM8960_PWR2_ROUT1               (1 << 5)
@@ -134,25 +133,27 @@
 //#define WM8960_PWR2_OUT3                (1 << 1)
 #define WM8960_PWR2_PLL_EN              (1 << 0)
 
-#define WM8960_PWR3_LMIC                                (1 << 5)
-#define WM8960_PWR3_RMIC                                (1 << 4)
-#define WM8960_PWR3_LOMIX                               (1 << 3)
-#define WM8960_PWR3_ROMIX                               (1 << 2)
+#define WM8960_PWR3_LMIC				(1 << 5)
+#define WM8960_PWR3_RMIC				(1 << 4)
+#define WM8960_PWR3_LOMIX				(1 << 3)
+#define WM8960_PWR3_ROMIX				(1 << 2)
 
-#define LEFTGAIN                        0x0a
+#define LEFTGAIN                    	0x0a
 #define LEFTGAIN_LDVU                   (1 << 8)
-#define LEFTGAIN_LDACVOL(x)             ((x) & 0xff)
+#define LEFTGAIN_LDACVOL(x)         	((x) & 0xff)
 
-#define RIGHTGAIN                       0x0b
+#define RIGHTGAIN                   	0x0b
 #define RIGHTGAIN_RDVU                  (1 << 8)
-#define RIGHTGAIN_RDACVOL(x)            ((x) & 0xff)
+#define RIGHTGAIN_RDACVOL(x)        	((x) & 0xff)
 
 #define ADDITIONAL1_DATSEL(x)         	(((x) & 0x3) << 2)
+
 #define AINTFCE1_WL_32               	(3 << 2)
 #define AINTFCE1_WL_24                  (2 << 2)
 #define AINTFCE1_WL_20                  (1 << 2)
 #define AINTFCE1_WL_16               	(0 << 2)
 #define AINTFCE1_FORMAT_I2S             (2 << 0)
+
 #define LOUT1_LO1VU                 	(1 << 8)
 #define LOUT1_LO1ZC                 	(1 << 7)
 #define LOUT1_LOUT1VOL(x)           	((x) & 0x7f)
@@ -170,5 +171,4 @@
 #define RINV_RINMUTE		    	(1 << 7)
 #define RINV_RIZC                   	(1 << 6)
 #define RINV_RINVOL(x)              	((x) & 0x3f)
-
 #endif

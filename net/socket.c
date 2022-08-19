@@ -1160,6 +1160,18 @@ static int sock_mmap(struct file *file, struct vm_area_struct *vma)
 
 static int sock_close(struct inode *inode, struct file *filp)
 {
+	/*
+	 *      It was possible the inode is NULL we were
+	 *      closing an unfinished socket.
+	 */
+
+	if (!inode) {
+		pr_debug("sock_close: NULL inode\n");
+		return 0;
+	}
+
+	pr_debug("socket_close[%lu]\n",inode->i_ino); 
+
 	sock_release(SOCKET_I(inode));
 	return 0;
 }
@@ -1356,7 +1368,9 @@ int sock_create_kern(int family, int type, int protocol, struct socket **res)
 	return __sock_create(&init_net, family, type, protocol, res, 1);
 }
 EXPORT_SYMBOL(sock_create_kern);
-
+#ifdef CONFIG_UNIX_SOCKET_TRACK_TOOL
+extern void unix_sock_track_socket_create(unsigned long ino, unsigned int socket_type);
+#endif/* CONFIG_UNIX_SOCKET_TRACK_TOOL */
 SYSCALL_DEFINE3(socket, int, family, int, type, int, protocol)
 {
 	int retval;
@@ -1387,17 +1401,31 @@ SYSCALL_DEFINE3(socket, int, family, int, type, int, protocol)
 
 out:
 	/* It may be already another descriptor 8) Not kernel problem. */
+
+#ifdef CONFIG_UNIX_SOCKET_TRACK_TOOL
+	if((retval >= 0)&& sock && SOCK_INODE(sock) )
+	{
+		pr_debug("socket_create[%lu]:fd=%d\n",SOCK_INODE(sock)->i_ino,retval);
+		if (family == PF_LOCAL)
+			unix_sock_track_socket_create(SOCK_INODE(sock)->i_ino, retval);
+	} else
+		pr_debug("socket_create:fd=%d\n",retval);
+#endif /* CONFIG_UNIX_SOCKET_TRACK_TOOL */                
+
 	return retval;
 
 out_release:
 	sock_release(sock);
+	pr_debug("sockdbg socket_create fail retval=%d\n",retval); 
 	return retval;
 }
 
 /*
  *	Create a pair of connected sockets.
  */
-
+#ifdef CONFIG_UNIX_SOCKET_TRACK_TOOL 
+extern void unix_sock_track_socket_pair_create(unsigned long ino, unsigned int socket_type, unsigned long ino1, unsigned int socket_type1);
+#endif/* CONFIG_UNIX_SOCKET_TRACK_TOOL */
 SYSCALL_DEFINE4(socketpair, int, family, int, type, int, protocol,
 		int __user *, usockvec)
 {
@@ -1471,18 +1499,30 @@ SYSCALL_DEFINE4(socketpair, int, family, int, type, int, protocol,
 	err = put_user(fd1, &usockvec[0]);
 	if (!err)
 		err = put_user(fd2, &usockvec[1]);
-	if (!err)
+	if (!err) {
+#ifdef CONFIG_UNIX_SOCKET_TRACK_TOOL
+		if(sock1 && SOCK_INODE(sock1) && sock2&& SOCK_INODE(sock2) ) {
+			pr_debug("socketpair:fd1[%lu]=%d, fd2[%lu]=%d\n", SOCK_INODE(sock1)->i_ino,fd1,SOCK_INODE(sock2)->i_ino,fd2);
+			if (family == PF_LOCAL)
+				unix_sock_track_socket_pair_create(SOCK_INODE(sock1)->i_ino, fd1, SOCK_INODE(sock2)->i_ino, fd2);
+		}
+#endif /* CONFIG_UNIX_SOCKET_TRACK_TOOL */
+
 		return 0;
+	}
 
 	sys_close(fd2);
 	sys_close(fd1);
+	pr_debug("socketpair fail1: %d\n", err);
 	return err;
 
 out_release_both:
 	sock_release(sock2);
 out_release_1:
 	sock_release(sock1);
+	pr_debug("sockdbg socketpair fail: %d\n", err);
 out:
+	pr_debug("socketpair fail2: %d\n", err);
 	return err;
 }
 
@@ -1555,7 +1595,9 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
  *	status to recvmsg. We need to add that support in a way thats
  *	clean when we restucture accept also.
  */
-
+#ifdef CONFIG_UNIX_SOCKET_TRACK_TOOL 
+extern int unix_sock_track_socket_check_unixsk(struct proto_ops *ops);
+#endif /* CONFIG_UNIX_SOCKET_TRACK_TOOL */
 SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 		int __user *, upeer_addrlen, int, flags)
 {
@@ -1630,6 +1672,14 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 out_put:
 	fput_light(sock->file, fput_needed);
 out:
+#ifdef CONFIG_UNIX_SOCKET_TRACK_TOOL
+	if( (err>=0)&& newsock && SOCK_INODE(newsock) ) {
+		pr_debug( "socket_accept[%lu]:fd=%d\n",SOCK_INODE(newsock)->i_ino,err);
+		if (unix_sock_track_socket_check_unixsk(sock->ops))
+			unix_sock_track_socket_create(SOCK_INODE(newsock)->i_ino, err);
+	} else
+		pr_debug(KERN_INFO "socket_accept:fd=%d\n",err);
+#endif /* CONFIG_UNIX_SOCKET_TRACK_TOOL */
 	return err;
 out_fd:
 	fput(newfile);
@@ -1956,6 +2006,16 @@ struct used_address {
 	unsigned int name_len;
 };
 
+static int copy_msghdr_from_user(struct msghdr *kmsg,
+				 struct msghdr __user *umsg)
+{
+	if (copy_from_user(kmsg, umsg, sizeof(struct msghdr)))
+		return -EFAULT;
+	if (kmsg->msg_namelen > sizeof(struct sockaddr_storage))
+		return -EINVAL;
+	return 0;
+}
+
 static int ___sys_sendmsg(struct socket *sock, struct msghdr __user *msg,
 			 struct msghdr *msg_sys, unsigned int flags,
 			 struct used_address *used_address)
@@ -1974,8 +2034,11 @@ static int ___sys_sendmsg(struct socket *sock, struct msghdr __user *msg,
 	if (MSG_CMSG_COMPAT & flags) {
 		if (get_compat_msghdr(msg_sys, msg_compat))
 			return -EFAULT;
-	} else if (copy_from_user(msg_sys, msg, sizeof(struct msghdr)))
-		return -EFAULT;
+	} else {
+		err = copy_msghdr_from_user(msg_sys, msg);
+		if (err)
+			return err;
+	}
 
 	if (msg_sys->msg_iovlen > UIO_FASTIOV) {
 		err = -EMSGSIZE;
@@ -2183,8 +2246,11 @@ static int ___sys_recvmsg(struct socket *sock, struct msghdr __user *msg,
 	if (MSG_CMSG_COMPAT & flags) {
 		if (get_compat_msghdr(msg_sys, msg_compat))
 			return -EFAULT;
-	} else if (copy_from_user(msg_sys, msg, sizeof(struct msghdr)))
-		return -EFAULT;
+	} else {
+		err = copy_msghdr_from_user(msg_sys, msg);
+		if (err)
+			return err;
+	}
 
 	if (msg_sys->msg_iovlen > UIO_FASTIOV) {
 		err = -EMSGSIZE;

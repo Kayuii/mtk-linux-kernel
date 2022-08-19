@@ -2,9 +2,6 @@
 # linux/drivers/maps/Makefile
 #
 
-EXTRA_CFLAGS += -Wall
-EXTRA_CFLAGS += -Werror
-
 ifeq ($(CONFIG_MTD_COMPLEX_MAPPINGS),y)
 obj-$(CONFIG_MTD)		+= map_funcs.o
 endif
@@ -20,8 +17,7 @@ obj-$(CONFIG_MTD_CK804XROM)	+= ck804xrom.o
 obj-$(CONFIG_MTD_TSUNAMI)	+= tsunami_flash.o
 obj-$(CONFIG_MTD_PXA2XX)	+= pxa2xx-flash.o
 obj-$(CONFIG_MTD_OCTAGON)	+= octagon-5066.o
-#obj-$(CONFIG_MTD_PHYSMAP)	+= physmap.o
-obj-$(CONFIG_MTD_PHYSMAP)       += ralink-flash.o
+obj-$(CONFIG_MTD_PHYSMAP)	+= physmap.o
 obj-$(CONFIG_MTD_PHYSMAP_OF)	+= physmap_of.o
 obj-$(CONFIG_MTD_PISMO)		+= pismo.o
 obj-$(CONFIG_MTD_PMC_MSP_EVM)   += pmcmsp-flash.o
@@ -50,3 +46,5 @@ obj-$(CONFIG_MTD_VMU)		+= vmu-flash.o
 obj-$(CONFIG_MTD_GPIO_ADDR)	+= gpio-addr-flash.o
 obj-$(CONFIG_MTD_LATCH_ADDR)	+= latch-addr-flash.o
 obj-$(CONFIG_MTD_LANTIQ)	+= lantiq-flash.o
+obj-$(CONFIG_MTK_MTD_NAND)   += ralink-flash.o
+

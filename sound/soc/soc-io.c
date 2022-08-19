@@ -20,9 +20,6 @@
 #include <trace/events/asoc.h>
 
 #ifdef CONFIG_REGMAP
-#if defined(CONFIG_SND_RALINK_SOC)
-extern void i2c_WM8751_write(unsigned int address, unsigned int data);
-#endif
 static int hw_write(struct snd_soc_codec *codec, unsigned int reg,
 		    unsigned int value)
 {
@@ -40,12 +37,8 @@ static int hw_write(struct snd_soc_codec *codec, unsigned int reg,
 		codec->cache_sync = 1;
 		return 0;
 	}
-#if defined(CONFIG_SND_RALINK_SOC)
-	i2c_WM8751_write(reg, value);
-	return 0;
-#else
+
 	return regmap_write(codec->control_data, reg, value);
-#endif
 }
 
 static unsigned int hw_read(struct snd_soc_codec *codec, unsigned int reg)
@@ -58,13 +51,12 @@ static unsigned int hw_read(struct snd_soc_codec *codec, unsigned int reg)
 	    codec->cache_bypass) {
 		if (codec->cache_only)
 			return -1;
-#if !defined(CONFIG_SND_RALINK_SOC)
+
 		ret = regmap_read(codec->control_data, reg, &val);
 		if (ret == 0)
 			return val;
 		else
 			return -1;
-#endif
 	}
 
 	ret = snd_soc_cache_read(codec, reg, &val);

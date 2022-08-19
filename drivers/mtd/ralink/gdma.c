@@ -19,9 +19,7 @@ int _nand_dma_sync(void)
 {	
 	//unmask to start dma
 	unsigned long data;
-#if defined (CONFIG_RALINK_RT3052) || defined (CONFIG_RALINK_RT3883) || defined (CONFIG_RALINK_RT3352) || defined (CONFIG_RALINK_RT5350) || defined (CONFIG_RALINK_RT6855)
 	int retry = 1000000; //fixme
-#endif
 
 	data = GDMA_READ_REG(GDMA_CTRL_REG1(DMA_CHNUM));
 	data &= ~( 0x01 << CH_MASK_OFFSET); 

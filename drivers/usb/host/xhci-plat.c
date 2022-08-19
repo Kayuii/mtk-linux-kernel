@@ -17,6 +17,10 @@
 
 #include "xhci.h"
 
+#ifdef CONFIG_MTK_XHCI
+#include <linux/xhci/xhci-mtk.h>
+#endif
+
 static void xhci_plat_quirks(struct device *dev, struct xhci_hcd *xhci)
 {
 	/*
@@ -25,13 +29,12 @@ static void xhci_plat_quirks(struct device *dev, struct xhci_hcd *xhci)
 	 * dev struct in order to setup MSI
 	 */
 	xhci->quirks |= XHCI_PLAT;
-#if defined (CONFIG_USB_MT7621_XHCI_PLATFORM)
-	/* MTK host controller gives a spurious successful event after a 
+	/*
+	 * CC: MTK host controller gives a spurious successful event after a
 	 * short transfer. Ignore it.
 	 */
 	xhci->quirks |= XHCI_SPURIOUS_SUCCESS;
 	xhci->quirks |= XHCI_LPM_SUPPORT;
-#endif
 }
 
 /* called during probe() after chip reset completes */
@@ -103,39 +106,22 @@ static int xhci_plat_probe(struct platform_device *pdev)
 
 	driver = &xhci_plat_xhci_driver;
 
-#if defined (CONFIG_USB_MT7621_XHCI_PLATFORM)
-	irq = XHC_IRQ;
-#else
 	irq = platform_get_irq(pdev, 0);
-#endif
-
 	if (irq < 0)
 		return -ENODEV;
 
-#if !defined (CONFIG_USB_MT7621_XHCI_PLATFORM)
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
 		return -ENODEV;
-#endif
 
 	hcd = usb_create_hcd(driver, &pdev->dev, dev_name(&pdev->dev));
 	if (!hcd)
 		return -ENOMEM;
 
-#if defined (CONFIG_USB_MT7621_XHCI_PLATFORM)
-	hcd->rsrc_start = (uint32_t)XHC_IO_START;
-	hcd->rsrc_len = XHC_IO_LENGTH;
-#else
 	hcd->rsrc_start = res->start;
 	hcd->rsrc_len = resource_size(res);
-#endif
 
-/* FIXME: 512MB */
-#if 0
 	if (!request_mem_region(hcd->rsrc_start, hcd->rsrc_len,
-#else
-	if (!request_region(hcd->rsrc_start, hcd->rsrc_len,
-#endif
 				driver->description)) {
 		dev_dbg(&pdev->dev, "controller already in use\n");
 		ret = -EBUSY;
@@ -149,7 +135,12 @@ static int xhci_plat_probe(struct platform_device *pdev)
 		goto release_mem_region;
 	}
 
+	#ifdef CONFIG_MTK_XHCI
+	ret = usb_add_hcd(hcd, irq, IRQF_SHARED | IRQF_TRIGGER_LOW);
+	#else
 	ret = usb_add_hcd(hcd, irq, IRQF_SHARED);
+	#endif
+
 	if (ret)
 		goto unmap_registers;
 
@@ -169,7 +160,11 @@ static int xhci_plat_probe(struct platform_device *pdev)
 	 */
 	*((struct xhci_hcd **) xhci->shared_hcd->hcd_priv) = xhci;
 
+	#ifdef CONFIG_MTK_XHCI
+	ret = usb_add_hcd(xhci->shared_hcd, irq, IRQF_SHARED | IRQF_TRIGGER_LOW);
+	#else
 	ret = usb_add_hcd(xhci->shared_hcd, irq, IRQF_SHARED);
+	#endif
 	if (ret)
 		goto put_usb3_hcd;
 
@@ -185,12 +180,7 @@ unmap_registers:
 	iounmap(hcd->regs);
 
 release_mem_region:
-/* FIXME: 512MB */
-#if 0
 	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
-#else
-	release_region(hcd->rsrc_start, hcd->rsrc_len);
-#endif
 
 put_hcd:
 	usb_put_hcd(hcd);
@@ -203,10 +193,6 @@ static int xhci_plat_remove(struct platform_device *dev)
 	struct usb_hcd	*hcd = platform_get_drvdata(dev);
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
 
-#if defined (CONFIG_USB_MT7621_XHCI_PLATFORM)
-	if (xhci->quirks & XHCI_COMP_MODE_QUIRK)
-		del_timer_sync(&xhci->comp_mode_recovery_timer);
-#endif
 	usb_remove_hcd(xhci->shared_hcd);
 	usb_put_hcd(xhci->shared_hcd);
 

@@ -15,6 +15,11 @@
 #include <net/ip.h>
 #include <net/xfrm.h>
 
+#if defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE)
+#include <net/esp.h>
+#include <linux/crypto.h>
+#endif
+
 /* Informational hook. The decap is still done here. */
 static struct xfrm_tunnel __rcu *rcv_notify_handlers __read_mostly;
 static DEFINE_MUTEX(xfrm4_mode_tunnel_input_mutex);
@@ -93,28 +98,29 @@ static int xfrm4_mode_tunnel_output(struct xfrm_state *x, struct sk_buff *skb)
 	int flags;
 
 #if defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE)
+	if (x->type->proto==IPPROTO_ESP)
 	{
-		int offset = 0;
-		if (x->props.mode == XFRM_MODE_TUNNEL)
+		struct esp_data *esp;
+		int header_len;
+		
+		esp = x->data;
+		if (!esp)
 		{	
-			if (x->encap)
-				offset = 20+8;
-			else
-				offset = 20;
+		    printk("%s: esp is NULL\n", __FUNCTION__);
+		    return -EPERM;
 		}
-		else
+		
+		header_len = (x->props.header_len) - (sizeof(struct ip_esp_hdr) +  crypto_aead_ivsize(esp->aead));
+		if (header_len < 0)
 		{
-			if (x->encap)
-				offset = 8;
-			else
-				offset = 0;
+		    printk("%s: Wrong value for header_len:%d\n", __FUNCTION__, header_len);
+		    return -EPERM;
 		}		
-		skb_set_network_header(skb, -offset);
+		skb_set_network_header(skb, -header_len);
 	}
-#else
-	skb_set_network_header(skb, -x->props.header_len);
+	else	
 #endif
-
+	skb_set_network_header(skb, -x->props.header_len);
 	skb->mac_header = skb->network_header +
 			  offsetof(struct iphdr, protocol);
 	skb->transport_header = skb->network_header + sizeof(*top_iph);
@@ -139,7 +145,7 @@ static int xfrm4_mode_tunnel_output(struct xfrm_state *x, struct sk_buff *skb)
 
 	top_iph->frag_off = (flags & XFRM_STATE_NOPMTUDISC) ?
 		0 : (XFRM_MODE_SKB_CB(skb)->frag_off & htons(IP_DF));
-	ip_select_ident(top_iph, dst->child, NULL);
+	ip_select_ident(skb, dst->child, NULL);
 
 	top_iph->ttl = ip4_dst_hoplimit(dst->child);
 

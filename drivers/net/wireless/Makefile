@@ -57,21 +57,11 @@ obj-$(CONFIG_MWIFIEX)	+= mwifiex/
 
 obj-$(CONFIG_BRCMFMAC)	+= brcm80211/
 obj-$(CONFIG_BRCMSMAC)	+= brcm80211/
+obj-$(CONFIG_MTK_CONNSYS_WIFI) += mt_soc/
 
-ifneq ($(CONFIG_WIFI_PKT_FWD),)
-ifneq ($(CONFIG_WIFI_PKT_FWD_V1),)
-obj-y                   += wifi_forward/wifi_hook_v1/
-else
-obj-y                   += wifi_forward/wifi_hook/
+ifneq ($(CONFIG_ARCH_MT6595), y)
+#obj-$(CONFIG_MTK_COMBO_WIFI) += mt66xx/
 endif
-endif
-
-ifneq ($(CONFIG_WIFI_PKT_FWD_V1),)
-obj-$(CONFIG_WIFI_PKT_FWD)       += wifi_forward/wifi_fwd_v1/
-else
-obj-$(CONFIG_WIFI_PKT_FWD)       += wifi_forward/wifi_fwd/
-endif
-
 ifneq ($(CONFIG_RLT_AP_SUPPORT),)
 obj-$(CONFIG_RLT_AP_SUPPORT)       += rlt_wifi_ap/
 endif
@@ -84,7 +74,3 @@ endif
 ifneq ($(CONFIG_MT_STA_SUPPORT),)
 obj-$(CONFIG_MT_STA_SUPPORT)      += mt_wifi_sta/
 endif
-#ifneq ($(CONFIG_WIFI_PKT_FWD),)
-#obj-y                         += wifi_forward/wifi_hook/
-#endif
-#obj-$(CONFIG_WIFI_PKT_FWD)       += wifi_forward/wifi_fwd/

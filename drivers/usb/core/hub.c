@@ -135,7 +135,7 @@ struct usb_hub *usb_hub_to_struct_hub(struct usb_device *hdev)
 	return usb_get_intfdata(hdev->actconfig->interface[0]);
 }
 
-static int usb_device_supports_lpm(struct usb_device *udev)
+int usb_device_supports_lpm(struct usb_device *udev)
 {
 	/* USB 2.1 (and greater) devices indicate LPM support through
 	 * their USB 2.0 Extended Capabilities BOS descriptor.
@@ -156,6 +156,11 @@ static int usb_device_supports_lpm(struct usb_device *udev)
 				"Power management will be impacted.\n");
 		return 0;
 	}
+
+	/* udev is root hub */
+	if (!udev->parent)
+		return 1;
+
 	if (udev->parent->lpm_capable)
 		return 1;
 
@@ -887,6 +892,26 @@ static int hub_usb3_port_disable(struct usb_hub *hub, int port1)
 	if (!hub_is_superspeed(hub->hdev))
 		return -EINVAL;
 
+	ret = hub_port_status(hub, port1, &portstatus, &portchange);
+        if (ret < 0)
+                return ret;
+
+        /*
+         * USB controller Advanced Micro Devices, Inc. [AMD] FCH USB XHCI
+         * Controller [1022:7814] will have spurious result making the following
+         * usb 3.0 device hotplugging route to the 2.0 root hub and recognized
+         * as high-speed device if we set the usb 3.0 port link state to
+         * Disabled. Since it's already in USB_SS_PORT_LS_RX_DETECT state, we
+         * check the state here to avoid the bug.
+         */
+        if ((portstatus & USB_PORT_STAT_LINK_STATE) ==
+                                USB_SS_PORT_LS_RX_DETECT) {
+                dev_dbg(&hub->ports[port1 - 1]->dev,
+                         "Not disabling port; link state is RxDetect\n");
+
+                return ret;
+        }
+
 	ret = hub_set_port_link_state(hub, port1, USB_SS_PORT_LS_SS_DISABLED);
 	if (ret)
 		return ret;
@@ -1249,11 +1274,7 @@ static void hub_quiesce(struct usb_hub *hub, enum hub_quiescing_type type)
 	if (type != HUB_SUSPEND) {
 		/* Disconnect all the children */
 		for (i = 0; i < hdev->maxchild; ++i) {
-#if defined (CONFIG_RALINK_MT7621)
-			if (hub->ports[i] && hub->ports[i]->child)
-#else
 			if (hub->ports[i]->child)
-#endif
 				usb_disconnect(&hub->ports[i]->child);
 		}
 	}
@@ -1561,10 +1582,15 @@ static int hub_configure(struct usb_hub *hub,
 	if (hub->has_indicators && blinkenlights)
 		hub->indicator [0] = INDICATOR_CYCLE;
 
-	for (i = 0; i < hdev->maxchild; i++)
-		if (usb_hub_create_port_device(hub, i + 1) < 0)
+	for (i = 0; i < hdev->maxchild; i++) {
+		ret = usb_hub_create_port_device(hub, i + 1);
+		if (ret < 0) {
 			dev_err(hub->intfdev,
 				"couldn't create port%d device.\n", i + 1);
+			hdev->maxchild = i;
+			goto fail_keep_maxchild;
+		}
+	}
 
 	usb_hub_adjust_deviceremovable(hdev, hub->descriptor);
 
@@ -1572,6 +1598,8 @@ static int hub_configure(struct usb_hub *hub,
 	return 0;
 
 fail:
+	hdev->maxchild = 0;
+fail_keep_maxchild:
 	dev_err (hub_dev, "config failed, %s (err %d)\n",
 			message, ret);
 	/* hub_disconnect() frees urb and descriptor */

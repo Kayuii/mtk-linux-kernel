@@ -1146,9 +1146,15 @@ int ahci_host_activate(struct ata_host *host, int irq, unsigned int n_msis)
 		return rc;
 
 	for (i = 0; i < host->n_ports; i++) {
+#if defined (CONFIG_ARCH_MT7623)
+		rc = devm_request_threaded_irq(host->dev,
+			irq + i, ahci_hw_interrupt, ahci_thread_fn, IRQF_SHARED | IRQF_TRIGGER_LOW,
+			dev_driver_string(host->dev), host->ports[i]);
+#else
 		rc = devm_request_threaded_irq(host->dev,
 			irq + i, ahci_hw_interrupt, ahci_thread_fn, IRQF_SHARED,
 			dev_driver_string(host->dev), host->ports[i]);
+#endif
 		if (rc)
 			goto out_free_irqs;
 	}
@@ -1371,8 +1377,13 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (hpriv->flags & AHCI_HFLAG_MULTI_MSI)
 		return ahci_host_activate(host, pdev->irq, n_msis);
 
+#if defined (CONFIG_ARCH_MT7623)
+	return ata_host_activate(host, pdev->irq, ahci_interrupt, IRQF_SHARED | IRQF_TRIGGER_LOW,
+				 &ahci_sht);
+#else
 	return ata_host_activate(host, pdev->irq, ahci_interrupt, IRQF_SHARED,
 				 &ahci_sht);
+#endif
 }
 
 module_pci_driver(ahci_pci_driver);

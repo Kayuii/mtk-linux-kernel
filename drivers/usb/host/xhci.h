@@ -29,20 +29,8 @@
 #include <linux/usb/hcd.h>
 
 /* Code sharing between pci-quirks and xhci hcd */
-#include "xhci-ext-caps.h"
+#include	"xhci-ext-caps.h"
 #include "pci-quirks.h"
-
-#if defined (CONFIG_USB_MT7621_XHCI_PLATFORM)
-#define XHC_IRQ 22
-#define XHC_IO_START 0x1E1C0000
-#define XHC_IO_LENGTH 0x10000
-/* MTK scheduler bitmasks */
-#define BPKTS(p)	((p) & 0x3f)
-#define BCSCOUNT(p)	(((p) & 0x7) << 8)
-#define BBM(p)		((p) << 11)
-#define BOFFSET(p)	((p) & 0x3fff)
-#define BREPEAT(p)	(((p) & 0x7fff) << 16)
-#endif
 
 /* xHCI PCI Configuration Registers */
 #define XHCI_SBRN_OFFSET	(0x60)
@@ -689,6 +677,14 @@ struct xhci_ep_ctx {
 /* deq bitmasks */
 #define EP_CTX_CYCLE_MASK		(1 << 0)
 
+#ifdef CONFIG_MTK_XHCI
+/* mtk scheduler bitmasks */
+#define BPKTS(p)	((p) & 0x3f)
+#define BCSCOUNT(p)	(((p) & 0x7) << 8)
+#define BBM(p)		((p) << 11)
+#define BOFFSET(p)	((p) & 0x3fff)
+#define BREPEAT(p)	(((p) & 0x7fff) << 16)
+#endif
 
 /**
  * struct xhci_input_control_context
@@ -1506,7 +1502,9 @@ struct xhci_hcd {
 #define	XHCI_LINK_TRB_QUIRK	(1 << 0)
 #define XHCI_RESET_EP_QUIRK	(1 << 1)
 #define XHCI_NEC_HOST		(1 << 2)
+#ifndef CONFIG_MTK_XHCI
 #define XHCI_AMD_PLL_FIX	(1 << 3)
+#endif
 #define XHCI_SPURIOUS_SUCCESS	(1 << 4)
 /*
  * Certain Intel host controllers have a limit to the number of endpoint
@@ -1521,7 +1519,9 @@ struct xhci_hcd {
 #define XHCI_BROKEN_MSI		(1 << 6)
 #define XHCI_RESET_ON_RESUME	(1 << 7)
 #define	XHCI_SW_BW_CHECKING	(1 << 8)
+#ifndef CONFIG_MTK_XHCI
 #define XHCI_AMD_0x96_HOST	(1 << 9)
+#endif
 #define XHCI_TRUST_TX_LENGTH	(1 << 10)
 #define XHCI_LPM_SUPPORT	(1 << 11)
 #define XHCI_INTEL_HOST		(1 << 12)
@@ -1548,12 +1548,8 @@ struct xhci_hcd {
 	/* Compliance Mode Recovery Data */
 	struct timer_list	comp_mode_recovery_timer;
 	u32			port_status_u0;
-#ifdef CONFIG_USB_MT7621_XHCI_PLATFORM
-#define COMP_MODE_RCVRY_MSECS 5000
-#else
 /* Compliance Mode Timer Triggered every 2 seconds */
 #define COMP_MODE_RCVRY_MSECS 2000
-#endif
 };
 
 /* convert between an HCD pointer and the corresponding EHCI_HCD */
@@ -1719,7 +1715,7 @@ void xhci_urb_free_priv(struct xhci_hcd *xhci, struct urb_priv *urb_priv);
 void xhci_free_command(struct xhci_hcd *xhci,
 		struct xhci_command *command);
 
-#if defined (CONFIG_PCI) && !defined (CONFIG_USB_MT7621_XHCI_PLATFORM)
+#ifdef CONFIG_PCI
 /* xHCI PCI glue */
 int xhci_register_pci(void);
 void xhci_unregister_pci(void);
@@ -1837,6 +1833,7 @@ int xhci_cancel_cmd(struct xhci_hcd *xhci, struct xhci_command *command,
 		union xhci_trb *cmd_trb);
 void xhci_ring_ep_doorbell(struct xhci_hcd *xhci, unsigned int slot_id,
 		unsigned int ep_index, unsigned int stream_id);
+union xhci_trb *xhci_find_next_enqueue(struct xhci_ring *ring);
 
 /* xHCI roothub code */
 void xhci_set_link_state(struct xhci_hcd *xhci, __le32 __iomem **port_array,

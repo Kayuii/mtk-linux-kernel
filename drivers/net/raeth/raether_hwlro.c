@@ -19,7 +19,6 @@
 #include "ra_ioctl.h"
 #include "ra_rfrw.h"
 
-extern struct net_device		*dev_raether;
 extern char const *nvram_get(int index, char *name);
 
 #if defined(CONFIG_RAETH_HW_LRO_FORCE)
@@ -62,7 +61,7 @@ int set_fe_lro_ring2_cfg(struct net_device *dev)
 	netdev_printk(KERN_CRIT, dev, "set_fe_lro_ring2_cfg()\n");
 
 	/* 1. Set RX ring mode to force port */
-	SET_PDMA_RXRING_MODE(ADMA_RX_RING2, PDMA_RX_FORCE_PORT);
+	SET_PDMA_RXRING2_MODE(PDMA_RX_FORCE_PORT);
 
 	/* 2. Configure lro ring */
 	/* 2.1 set src/destination TCP ports */
@@ -94,7 +93,7 @@ int set_fe_lro_ring3_cfg(struct net_device *dev)
 	netdev_printk(KERN_CRIT, dev, "set_fe_lro_ring3_cfg()\n");
 
 	/* 1. Set RX ring mode to force port */
-	SET_PDMA_RXRING_MODE(ADMA_RX_RING3, PDMA_RX_FORCE_PORT);
+	SET_PDMA_RXRING3_MODE(PDMA_RX_FORCE_PORT);
 
 	/* 2. Configure lro ring */
 	/* 2.1 set src/destination TCP ports */
@@ -114,7 +113,7 @@ int set_fe_lro_ring3_cfg(struct net_device *dev)
 	SET_PDMA_RXRING_AGE_TIME(ADMA_RX_RING3, HW_LRO_AGE_TIME);
 
 	/* 4. Valid LRO ring */
-	SET_PDMA_RXRING_VALID(ADMA_RX_RING3, 1);
+	SET_PDMA_RXRING3_VALID(1);
 
 	return 0;
 }
@@ -149,10 +148,11 @@ int set_fe_lro_glo_cfg(struct net_device *dev)
 	return 0;
 }
 #else
+
 int set_fe_lro_auto_cfg(struct net_device *dev)
 {
 	unsigned int regVal = 0;
-	char const *lan_ip_tmp, *wan_ip_tmp;
+	char *lan_ip_tmp, *wan_ip_tmp;
 	unsigned int lan_ip, wan_ip;
 
 #ifdef CONFIG_DUAL_IMAGE
@@ -277,98 +277,62 @@ int fe_hw_lro_init(struct net_device *dev)
 	END_DEVICE *ei_local = netdev_priv(dev);
 
 	/* Initial RX Ring 3 */
-	ei_local->rx_ring[3] = 
-	    dma_alloc_coherent(dev->dev.parent, 
-	    			NUM_LRO_RX_DESC * sizeof(struct PDMA_rxdesc), 
-	    			&ei_local->phy_rx_ring3, 
-	    			GFP_ATOMIC | __GFP_ZERO);
+	ei_local->rx_ring3 =
+	    pci_alloc_consistent(NULL, NUM_LRO_RX_DESC * sizeof(struct PDMA_rxdesc),
+				 &ei_local->phy_rx_ring3);
 	for (i = 0; i < NUM_LRO_RX_DESC; i++) {
-		memset(&ei_local->rx_ring[3][i], 0, sizeof(struct PDMA_rxdesc));
-		ei_local->rx_ring[3][i].rxd_info2.DDONE_bit = 0;
-		ei_local->rx_ring[3][i].rxd_info2.LS0 = 0;
-		ei_local->rx_ring[3][i].rxd_info2.PLEN0 =
+		memset(&ei_local->rx_ring3[i], 0, sizeof(struct PDMA_rxdesc));
+		ei_local->rx_ring3[i].rxd_info2.DDONE_bit = 0;
+		ei_local->rx_ring3[i].rxd_info2.LS0 = 0;
+		ei_local->rx_ring3[i].rxd_info2.PLEN0 =
 		    SET_ADMA_RX_LEN0(MAX_LRO_RX_LENGTH);
-		ei_local->rx_ring[3][i].rxd_info2.PLEN1 =
+		ei_local->rx_ring3[i].rxd_info2.PLEN1 =
 		    SET_ADMA_RX_LEN1(MAX_LRO_RX_LENGTH >> 14);
-#ifdef USE_BUILD_SKB
-		ei_local->rx_ring[3][i].rxd_info1.PDP0 =
-		    dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[3][i],
-				   MAX_LRO_RX_LENGTH, DMA_FROM_DEVICE);
-#else
-		ei_local->rx_ring[3][i].rxd_info1.PDP0 =
-		    dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[3][i]->data,
-				   MAX_LRO_RX_LENGTH, DMA_FROM_DEVICE);
-#endif
-		if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->rx_ring[3][i].rxd_info1.PDP0))){
-			printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
-			goto no_rx_mem;
-		}
+		ei_local->rx_ring3[i].rxd_info1.PDP0 =
+		    dma_map_single(NULL, ei_local->netrx3_skbuf[i]->data,
+				   MAX_LRO_RX_LENGTH, PCI_DMA_FROMDEVICE);
 	}
 	netdev_printk(KERN_CRIT, dev,
-		      "\nphy_rx_ring3 = 0x%08x, rx_ring[3] = 0x%p\n",
-		      ei_local->phy_rx_ring3, ei_local->rx_ring[3]);
+		      "\nphy_rx_ring3 = 0x%08x, rx_ring3 = 0x%p\n",
+		      ei_local->phy_rx_ring3, ei_local->rx_ring3);
 	/* Initial RX Ring 2 */
-	ei_local->rx_ring[2] = 
-	    dma_alloc_coherent(dev->dev.parent, 
-	    			NUM_LRO_RX_DESC * sizeof(struct PDMA_rxdesc), 
-	    			&ei_local->phy_rx_ring2, 
-	    			GFP_ATOMIC | __GFP_ZERO);
+	ei_local->rx_ring2 =
+	    pci_alloc_consistent(NULL, NUM_LRO_RX_DESC * sizeof(struct PDMA_rxdesc),
+				 &ei_local->phy_rx_ring2);
 	for (i = 0; i < NUM_LRO_RX_DESC; i++) {
-		memset(&ei_local->rx_ring[2][i], 0, sizeof(struct PDMA_rxdesc));
-		ei_local->rx_ring[2][i].rxd_info2.DDONE_bit = 0;
-		ei_local->rx_ring[2][i].rxd_info2.LS0 = 0;
-		ei_local->rx_ring[2][i].rxd_info2.PLEN0 =
+		memset(&ei_local->rx_ring2[i], 0, sizeof(struct PDMA_rxdesc));
+		ei_local->rx_ring2[i].rxd_info2.DDONE_bit = 0;
+		ei_local->rx_ring2[i].rxd_info2.LS0 = 0;
+		ei_local->rx_ring2[i].rxd_info2.PLEN0 =
 		    SET_ADMA_RX_LEN0(MAX_LRO_RX_LENGTH);
-		ei_local->rx_ring[2][i].rxd_info2.PLEN1 =
+		ei_local->rx_ring2[i].rxd_info2.PLEN1 =
 		    SET_ADMA_RX_LEN1(MAX_LRO_RX_LENGTH >> 14);
-#ifdef USE_BUILD_SKB
-		ei_local->rx_ring[2][i].rxd_info1.PDP0 =
-		    dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[2][i],
-				   MAX_LRO_RX_LENGTH, DMA_FROM_DEVICE);
-#else
-		ei_local->rx_ring[2][i].rxd_info1.PDP0 =
-		    dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[2][i]->data,
-				   MAX_LRO_RX_LENGTH, DMA_FROM_DEVICE);
-#endif
-		if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->rx_ring[2][i].rxd_info1.PDP0))){
-			printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
-			goto no_rx_mem;
-		}
+		ei_local->rx_ring2[i].rxd_info1.PDP0 =
+		    dma_map_single(NULL, ei_local->netrx2_skbuf[i]->data,
+				   MAX_LRO_RX_LENGTH, PCI_DMA_FROMDEVICE);
 	}
 	netdev_printk(KERN_CRIT, dev,
-		      "\nphy_rx_ring2 = 0x%08x, rx_ring[2] = 0x%p\n",
-		      ei_local->phy_rx_ring2, ei_local->rx_ring[2]);
+		      "\nphy_rx_ring2 = 0x%08x, rx_ring2 = 0x%p\n",
+		      ei_local->phy_rx_ring2, ei_local->rx_ring2);
 	/* Initial RX Ring 1 */
-	ei_local->rx_ring[1] = 
-	    dma_alloc_coherent(dev->dev.parent, 
-	    			NUM_LRO_RX_DESC * sizeof(struct PDMA_rxdesc), 
-	    			&ei_local->phy_rx_ring1, 
-	    			GFP_ATOMIC | __GFP_ZERO);
+	ei_local->rx_ring1 =
+	    pci_alloc_consistent(NULL, NUM_LRO_RX_DESC * sizeof(struct PDMA_rxdesc),
+				 &ei_local->phy_rx_ring1);
 	for (i = 0; i < NUM_LRO_RX_DESC; i++) {
-		memset(&ei_local->rx_ring[1][i], 0, sizeof(struct PDMA_rxdesc));
-		ei_local->rx_ring[1][i].rxd_info2.DDONE_bit = 0;
-		ei_local->rx_ring[1][i].rxd_info2.LS0 = 0;
-		ei_local->rx_ring[1][i].rxd_info2.PLEN0 =
+		memset(&ei_local->rx_ring1[i], 0, sizeof(struct PDMA_rxdesc));
+		ei_local->rx_ring1[i].rxd_info2.DDONE_bit = 0;
+		ei_local->rx_ring1[i].rxd_info2.LS0 = 0;
+		ei_local->rx_ring1[i].rxd_info2.PLEN0 =
 		    SET_ADMA_RX_LEN0(MAX_LRO_RX_LENGTH);
-		ei_local->rx_ring[1][i].rxd_info2.PLEN1 =
+		ei_local->rx_ring1[i].rxd_info2.PLEN1 =
 		    SET_ADMA_RX_LEN1(MAX_LRO_RX_LENGTH >> 14);
-#ifdef USE_BUILD_SKB
-		ei_local->rx_ring[1][i].rxd_info1.PDP0 =
-		    dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[1][i],
-				   MAX_LRO_RX_LENGTH, DMA_FROM_DEVICE);
-#else
-		ei_local->rx_ring[1][i].rxd_info1.PDP0 =
-		    dma_map_single(dev->dev.parent, ei_local->netrx_skbuf[1][i]->data,
-				   MAX_LRO_RX_LENGTH, DMA_FROM_DEVICE);
-#endif
-		if (unlikely(dma_mapping_error(dev->dev.parent, ei_local->rx_ring[1][i].rxd_info1.PDP0))){
-			printk(KERN_ERR "[%s]dma_map_single() failed...\n", __func__);
-			goto no_rx_mem;
-		}
+		ei_local->rx_ring1[i].rxd_info1.PDP0 =
+		    dma_map_single(NULL, ei_local->netrx1_skbuf[i]->data,
+				   MAX_LRO_RX_LENGTH, PCI_DMA_FROMDEVICE);
 	}
 	netdev_printk(KERN_CRIT, dev,
-		      "\nphy_rx_ring1 = 0x%08x, rx_ring[1] = 0x%p\n",
-		      ei_local->phy_rx_ring1, ei_local->rx_ring[1]);
+		      "\nphy_rx_ring1 = 0x%08x, rx_ring1 = 0x%p\n",
+		      ei_local->phy_rx_ring1, ei_local->rx_ring1);
 
 	sysRegWrite(RX_BASE_PTR3, phys_to_bus((u32) ei_local->phy_rx_ring3));
 	sysRegWrite(RX_MAX_CNT3, cpu_to_le32((u32) NUM_LRO_RX_DESC));
@@ -383,12 +347,6 @@ int fe_hw_lro_init(struct net_device *dev)
 	sysRegWrite(RX_CALC_IDX1, cpu_to_le32((u32) (NUM_LRO_RX_DESC - 1)));
 	sysRegWrite(PDMA_RST_CFG, PST_DRX_IDX1);
 
-#ifdef CONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-	ei_local->rx_calc_idx[1] =  sysRegRead(RX_CALC_IDX1);
-	ei_local->rx_calc_idx[2] =  sysRegRead(RX_CALC_IDX2);
-	ei_local->rx_calc_idx[3] =  sysRegRead(RX_CALC_IDX3);
-#endif
-
 #if defined(CONFIG_RAETH_HW_LRO_FORCE)
 	set_fe_lro_ring1_cfg(dev);
 	set_fe_lro_ring2_cfg(dev);
@@ -402,10 +360,7 @@ int fe_hw_lro_init(struct net_device *dev)
 	ei_local->hw_lro_alpha = HW_LRO_PKT_INT_ALPHA;
 	ei_local->hw_lro_fix_setting = 1;
 
-	return 0;
-
-no_rx_mem:
-	return -ENOMEM;
+	return 1;
 }
 EXPORT_SYMBOL(fe_hw_lro_init);
 

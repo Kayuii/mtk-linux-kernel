@@ -51,7 +51,7 @@
 #endif
 #define NUM_PQ 16
 #define NUM_PQ_RESV 4
-#define FFA (2048-64)
+#define FFA 2048
 #define QUEUE_OFFSET 0x10
 #define NUM_TX_DESC (NUM_PQ * NUM_PQ_RESV + FFA)
 #else
@@ -99,7 +99,6 @@
 #define IRQ_ENET0	3 	/* hardware interrupt #3, defined in RT2880 Soc Design Spec Rev 0.03, pp43 */
 #endif
 
-#define MAX_RX_RING_NUM 4
 #if defined (CONFIG_RAETH_HW_LRO)
 #define	HW_LRO_TIMER_UNIT   1
 #define	HW_LRO_REFRESH_TIME 50000

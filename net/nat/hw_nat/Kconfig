@@ -396,17 +396,3 @@ config RA_HW_NAT_ACCNT_MAINTAINER
 	help
 	"if you need 64bits bytes/pkts counter, and ask HNAT module to get statistic counter periodically, please enable it"
 
-config SUPPORT_WLAN_OPTIMIZE
-	bool "PCIe/Wifi to Lan not binding"
-	default y
-	depends on RA_HW_NAT
-
-config  SUPPORT_WLAN_OPTIMIZE_TX
-	bool "Lan to Wifi not binding"
-	default y
-	depends on SUPPORT_WLAN_OPTIMIZE
-
-config  SUPPORT_WLAN_OPTIMIZE_RX
-	bool "Wifi to Lan not binding"
-	default y
-	depends on SUPPORT_WLAN_OPTIMIZE

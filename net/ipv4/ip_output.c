@@ -90,6 +90,7 @@ extern int (*smb_nf_local_out_hook)(struct sk_buff *skb);
 extern int (*smb_nf_post_routing_hook)(struct sk_buff *skb);
 #endif
 
+
 int sysctl_ip_default_ttl __read_mostly = IPDEFTTL;
 EXPORT_SYMBOL(sysctl_ip_default_ttl);
 
@@ -163,7 +164,7 @@ int ip_build_and_send_pkt(struct sk_buff *skb, struct sock *sk,
 	iph->daddr    = (opt && opt->opt.srr ? opt->opt.faddr : daddr);
 	iph->saddr    = saddr;
 	iph->protocol = sk->sk_protocol;
-	ip_select_ident(iph, &rt->dst, sk);
+	ip_select_ident(skb, &rt->dst, sk);
 
 	if (opt && opt->opt.optlen) {
 		iph->ihl += opt->opt.optlen>>2;
@@ -414,7 +415,7 @@ packet_routed:
 		ip_options_build(skb, &inet_opt->opt, inet->inet_daddr, rt, 0);
 	}
 
-	ip_select_ident_more(iph, &rt->dst, sk,
+	ip_select_ident_more(skb, &rt->dst, sk,
 			     (skb_shinfo(skb)->gso_segs ?: 1) - 1);
 
 	skb->priority = sk->sk_priority;
@@ -423,17 +424,13 @@ packet_routed:
 #if  defined(CONFIG_RA_HW_NAT) || defined(CONFIG_RA_HW_NAT_MODULE)
 #if defined (CONFIG_RA_HW_NAT_PPTP_L2TP)
     /* only clear headeroom for TCP OR not L2TP packets */
-    	if( (iph->protocol == 0x6) || (ntohs(udp_hdr(skb)->dest) != 1701) ) {
-    		if(IS_SPACE_AVAILABLED(skb)){
-        		FOE_MAGIC_TAG(skb) = 0;
-        		FOE_AI(skb) = UN_HIT;
-        	}	
-    	}
+    if( (iph->protocol == 0x6) || (ntohs(udp_hdr(skb)->dest) != 1701) ) {
+        FOE_MAGIC_TAG(skb) = 0;
+        FOE_AI(skb) = UN_HIT;
+    }
 #else
-	if(IS_SPACE_AVAILABLED(skb)){
-    		FOE_MAGIC_TAG(skb) = 0;
-    		FOE_AI(skb) = UN_HIT;
-    	}
+    FOE_MAGIC_TAG(skb) = 0;
+    FOE_AI(skb) = UN_HIT;
 #endif
 #endif
 
@@ -881,7 +878,7 @@ static int __ip_append_data(struct sock *sk,
 		csummode = CHECKSUM_PARTIAL;
 
 	cork->length += length;
-	if (((length > mtu) || (skb && skb_is_gso(skb))) &&
+	if (((length > mtu) || (skb && skb_has_frags(skb))) &&
 	    (sk->sk_protocol == IPPROTO_UDP) &&
 	    (rt->dst.dev->features & NETIF_F_UFO) && !rt->dst.header_len) {
 		err = ip_ufo_append_data(sk, queue, getfrag, from, length,
@@ -1361,7 +1358,7 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
 	else
 		ttl = ip_select_ttl(inet, &rt->dst);
 
-	iph = (struct iphdr *)skb->data;
+	iph = ip_hdr(skb);
 	iph->version = 4;
 	iph->ihl = 5;
 	iph->tos = inet->tos;
@@ -1369,7 +1366,7 @@ struct sk_buff *__ip_make_skb(struct sock *sk,
 	iph->ttl = ttl;
 	iph->protocol = sk->sk_protocol;
 	ip_copy_addrs(iph, fl4);
-	ip_select_ident(iph, &rt->dst, sk);
+	ip_select_ident(skb, &rt->dst, sk);
 
 	if (opt) {
 		iph->ihl += opt->optlen>>2;

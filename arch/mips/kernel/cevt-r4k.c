@@ -48,19 +48,6 @@ DEFINE_PER_CPU(struct clock_event_device, mips_clockevent_device);
 int cp0_timer_irq_installed;
 
 #ifndef CONFIG_MIPS_MT_SMTC
-
-#if defined(CONFIG_RALINK_SYSTICK) && defined(CONFIG_RALINK_MT7621)
-void ra_percpu_event_handler(void)
-{
-	struct clock_event_device *cd;
-	int cpu = smp_processor_id();
-
-	cd = &per_cpu(mips_clockevent_device, cpu);
-	cd->event_handler(cd);
-}
-#endif
-
-
 irqreturn_t c0_compare_interrupt(int irq, void *dev_id)
 {
 	const int r2 = cpu_has_mips_r2;
@@ -184,11 +171,6 @@ int c0_compare_int_usable(void)
 }
 
 #ifndef CONFIG_MIPS_MT_SMTC
-
-#if defined(CONFIG_RALINK_SYSTICK) && defined(CONFIG_RALINK_MT7621)
-extern void ra_systick_event_broadcast(const struct cpumask *mask);
-#endif
-
 int __cpuinit r4k_clockevent_init(void)
 {
 	unsigned int cpu = smp_processor_id();
@@ -214,11 +196,6 @@ int __cpuinit r4k_clockevent_init(void)
 
 	cd->name		= "MIPS";
 	cd->features		= CLOCK_EVT_FEAT_ONESHOT;
-
-#if defined(CONFIG_RALINK_SYSTICK) && defined(CONFIG_RALINK_MT7621)
-	cd->features		= cd->features | CLOCK_EVT_FEAT_DUMMY;
-	cd->broadcast		= ra_systick_event_broadcast;
-#endif
 
 	clockevent_set_clock(cd, mips_hpt_frequency);
 

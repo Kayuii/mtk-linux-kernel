@@ -163,39 +163,8 @@ typedef struct {
 	uint8_t is_mcast;
 
 } PktParseResult;
-#if defined (CONFIG_SUPPORT_WLAN_OPTIMIZE)
-typedef struct {
-	//layer2 header
-	uint8_t dmac[6];
-	uint8_t smac[6];
 
-	//vlan header 
-	uint16_t vlan_tag;
-	uint16_t vlan1_gap;
-	uint16_t vlan1;
-	uint16_t vlan2_gap;
-	uint16_t vlan2;
-	uint16_t vlan_layer;
 
-	//pppoe header
-	uint32_t pppoe_gap;
-	uint16_t ppp_tag;
-	uint16_t pppoe_sid;
-
-	//layer3 header
-	uint16_t eth_type;
-	struct iphdr iph;
-	struct ipv6hdr ip6h;
-
-	//layer4 header
-	struct tcphdr th;
-	struct udphdr uh;
-
-	uint32_t pkt_type;
-	uint8_t is_mcast;
-
-} PktRxParseResult;
-#endif
 /*
  * DEFINITIONS AND MACROS
  */

@@ -38,8 +38,5 @@ ifeq ($(CONFIG_MTK_AEE_KDUMP),y)
 EXTRA_CFLAGS		+= -DMT6575_SD_DEBUG
 endif
 
-EXTRA_CFLAGS += -Wall
-EXTRA_CFLAGS += -Werror
-
 clean:
 	@rm -f *.o modules.order .*.cmd

@@ -31,7 +31,6 @@
 #include <linux/usb/ehci_pdriver.h>
 
 #include "ehci.h"
-#include "mtk-phy.h"
 
 #define DRIVER_DESC "EHCI generic platform driver"
 
@@ -123,12 +122,6 @@ static int ehci_platform_probe(struct platform_device *dev)
 		err = PTR_ERR(hcd->regs);
 		goto err_put_hcd;
 	}
-
-#if defined (CONFIG_RALINK_MT7628)
-	        /* MTK PHY init */
-	        mt7628_phy_init();
-#endif
-
 	err = usb_add_hcd(hcd, irq, IRQF_SHARED);
 	if (err)
 		goto err_put_hcd;

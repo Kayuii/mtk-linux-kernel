@@ -745,15 +745,6 @@ config I2C_XILINX
 	  This driver can also be built as a module.  If so, the module
 	  will be called xilinx_i2c.
 
-config I2C_MTK
-	tristate "MTK I2C Controller"
-	depends on I2C
-	default n
-
-config I2C_MANUAL_MODE
-	tristate "MTK I2C MANUAL MODE"
-	depends on I2C_MTK && (RALINK_MT7628 || RALINK_MT7621)
-
 config I2C_XLR
 	tristate "XLR I2C support"
 	depends on CPU_XLR
@@ -961,5 +952,15 @@ config SCx200_ACB
 
 	  This support is also available as a module.  If so, the module
 	  will be called scx200_acb.
+
+# I2C Bus
+config MTK_I2C #I2C_MT6516 I2C_MT6573
+        tristate "MediaTek I2C adapter"
+        depends on I2C
+        default y
+        help
+          This selects the MediaTek(R) Integrated Inter Circuit bus driver.
+          If you want to use MediaTek(R) I2C interface, say Y or M here.
+          If unsure, say N.
 
 endmenu

@@ -24,9 +24,7 @@
 #include <asm/pgtable-bits.h>
 #include <asm/mipsregs.h>
 #include <asm/stackframe.h>
-#if defined (CONFIG_RALINK_MT7621)
-#include <asm/cacheops.h>
-#endif
+
 #include <kernel-entry-init.h>
 
 	/*
@@ -144,71 +142,16 @@ FEXPORT(__kernel_entry)
 
 	__REF
 
-#ifdef CONFIG_EVA
-	.align  8
-#endif
-
 NESTED(kernel_entry, 16, sp)			# kernel entry point
 
-	kernel_entry_setup                      # cpu specific setup
+	kernel_entry_setup			# cpu specific setup
 
 	setup_c0_status_pri
-#ifdef CONFIG_RALINK_MT7621
-	/* Set L2 CCA Override to WT on lowest 256MB */
-	.set push
-	.set noreorder
-
-	jal 1f
-	li t0, 5
-1:
-	ins ra, t0, 29, 3
-	addiu   ra, 2f-1b
-	jr  ra
-	nop
-
-   /* Running in KSEG 1*/
-2:
-	.set pop
-	/* Flush L2 Cache before setting CCA overrides */
-	/* Define L2 Cache Line Size 32 */
-#define L2_LINE_SIZE  32
-	/* Define L2 Size 256K */
-#define L2_SIZE       (256<<10)
-	li      v0, L2_SIZE
-	move    v1, zero 
-
-1:
-	cache   Index_Writeback_Inv_SD, 0(v1)
-	addiu   v1, v1, L2_LINE_SIZE    /* Increase Index */
-	bne     v1, v0, 1b
-	nop
-
-	sync
-
-	/* Override bottom half of DDR to uncached (DMA zone) */
-	lui     v0,0xbfbf
-	ori     v0,v0,0x8000
-
-	lui    v1, (~(((CONFIG_KERNEL_START_ADDR-0x80001000)-1)>>16))& 0xFFFF
-	ori     v1,v1,0x0051
-	sw      v1, 0xb8(v0)
-
-	/* Base */
-	sw      zero,0xb0(v0)
-
-	/* Set default override to WT */
-	lui     v1,0x1fbf
-	ori     v1,v1,0x8010
-	sw      v1, 0x08(v0)
-#endif
 
 	/* We might not get launched at the address the kernel is linked to,
 	   so we jump there.  */
 	PTR_LA	t0, 0f
-	jr.hb   t0
-#ifdef CONFIG_EVA
-	.align  8
-#endif
+	jr	t0
 0:
 
 #ifdef CONFIG_MIPS_MT_SMTC
@@ -261,13 +204,7 @@ NESTED(kernel_entry, 16, sp)			# kernel entry point
  * SMP slave cpus entry point.	Board specific code for bootstrap calls this
  * function after setting up the stack and gp registers.
  */
-
-#ifdef CONFIG_EVA
-	.align  8
-#endif
-
 NESTED(smp_bootstrap, 16, sp)
-
 #ifdef CONFIG_MIPS_MT_SMTC
 	/*
 	 * Read-modify-writes of Status must be atomic, and this
@@ -279,10 +216,8 @@ NESTED(smp_bootstrap, 16, sp)
 	DMT	10	# dmt t2 /* t0, t1 are used by CLI and setup_c0_status() */
 	jal	mips_ihb
 #endif /* CONFIG_MIPS_MT_SMTC */
-
-	smp_slave_setup
 	setup_c0_status_sec
-
+	smp_slave_setup
 #ifdef CONFIG_MIPS_MT_SMTC
 	andi	t2, t2, VPECONTROL_TE
 	beqz	t2, 2f
@@ -290,9 +225,6 @@ NESTED(smp_bootstrap, 16, sp)
 2:
 #endif /* CONFIG_MIPS_MT_SMTC */
 	j	start_secondary
-#ifdef CONFIG_EVA
-	.align  8
-#endif
 	END(smp_bootstrap)
 #endif /* CONFIG_SMP */
 

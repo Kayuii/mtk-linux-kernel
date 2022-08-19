@@ -47,7 +47,6 @@ obj-$(CONFIG_PPP_MPPE) += ppp/
 obj-$(CONFIG_PPP_SYNC_TTY) += ppp/
 obj-$(CONFIG_PPPOE) += ppp/
 obj-$(CONFIG_PPPOL2TP) += ppp/
-obj-$(CONFIG_PPPOPPTP) += ppp/
 obj-$(CONFIG_PPTP) += ppp/
 obj-$(CONFIG_SLIP) += slip/
 obj-$(CONFIG_SLHC) += slip/
@@ -57,13 +56,11 @@ obj-$(CONFIG_WAN) += wan/
 obj-$(CONFIG_WLAN) += wireless/
 obj-$(CONFIG_WIMAX) += wimax/
 obj-$(CONFIG_IEEE802154) += ieee802154/
+obj-$(CONFIG_MT6605_NFC) += nfc/
 
 obj-$(CONFIG_VMXNET3) += vmxnet3/
 obj-$(CONFIG_XEN_NETDEV_FRONTEND) += xen-netfront.o
 obj-$(CONFIG_XEN_NETDEV_BACKEND) += xen-netback/
-
-obj-$(CONFIG_RALINK_RDM) += rt_rdm/
-obj-$(CONFIG_RAETH) += raeth/
 
 obj-$(CONFIG_USB_CATC)          += usb/
 obj-$(CONFIG_USB_KAWETH)        += usb/
@@ -76,11 +73,7 @@ obj-$(CONFIG_USB_IPHETH)        += usb/
 obj-$(CONFIG_USB_CDC_PHONET)   += usb/
 
 obj-$(CONFIG_HYPERV_NET) += hyperv/
-obj-$(CONFIG_NTB_NETDEV) += ntb_netdev.o
+obj-$(CONFIG_RALINK_RDM) += rt_rdm/
+obj-$(CONFIG_RAETH) += raeth/
+obj-$(CONFIG_RALINK_HWCRYPTO) +=cryptoDriver_eip97/
 
-ifeq ($(CONFIG_RALINK_HWCRYPTO), m)
-obj-$(CONFIG_RALINK_HWCRYPTO) += cryptoDriver/
-endif
-
-#obj-m += eip93_drivers/cryptoEngine/V-Driver_93/build/
-#obj-m += eip93_drivers/slad_test_k/

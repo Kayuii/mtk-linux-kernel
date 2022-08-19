@@ -3,7 +3,8 @@
 #
 
 menuconfig HWMON
-	tristate "Hardware Monitoring support"
+#	tristate "Hardware Monitoring support"
+	bool "Hardware Monitoring support"
 	depends on HAS_IOMEM
 	default y
 	help

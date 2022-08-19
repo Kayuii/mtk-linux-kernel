@@ -28,12 +28,12 @@
 #include <linux/percpu-rwsem.h>
 #include <linux/blk_types.h>
 
-#include <asm/byteorder.h>
-#include <uapi/linux/fs.h>
-
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
+#ifdef CONFIG_SPLICE_NET_SUPPORT
 #include <linux/net.h>
 #endif
+
+#include <asm/byteorder.h>
+#include <uapi/linux/fs.h>
 
 struct export_operations;
 struct hd_geometry;
@@ -248,14 +248,6 @@ struct iattr {
  */
 #include <linux/quota.h>
 
-#if defined(CONFIG_SUPPORT_OPENWRT)
-/*
- * Maximum number of layers of fs stack.  Needs to be limited to
- * prevent kernel stack overflow
- */
-#define FILESYSTEM_MAX_STACK_DEPTH 2
-#endif
-
 /** 
  * enum positive_aop_returns - aop return codes with specific semantics
  *
@@ -292,6 +284,10 @@ enum positive_aop_returns {
 #define AOP_FLAG_NOFS			0x0004 /* used by filesystem to direct
 						* helper code (eg buffer layer)
 						* to clear GFP_FS from alloc */
+
+#ifdef CONFIG_SPLICE_NET_SUPPORT
+#define AOP_FLAG_RECVFILE		0x0008
+#endif
 
 /*
  * oh the beauties of C type declarations.
@@ -1334,12 +1330,6 @@ struct super_block {
 
 	/* Being remounted read-only */
 	int s_readonly_remount;
-#if defined(CONFIG_SUPPORT_OPENWRT)
-	/*
-	 * Indicates how deep in a filesystem stack this SB is
-	 */
-	int s_stack_depth;
-#endif
 };
 
 /* superblock cache pruning functions */
@@ -1557,11 +1547,11 @@ struct file_operations {
 	int (*flock) (struct file *, int, struct file_lock *);
 	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *, loff_t *, size_t, unsigned int);
 	ssize_t (*splice_read)(struct file *, loff_t *, struct pipe_inode_info *, size_t, unsigned int);
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
-	ssize_t (*splice_from_socket)(struct file *, struct socket *,
-		loff_t __user *ppos, size_t count);
-#endif
 	int (*setlease)(struct file *, long, struct file_lock **);
+#ifdef CONFIG_SPLICE_NET_SUPPORT
+	ssize_t (*splice_from_socket)(struct file *, struct socket *,
+			loff_t __user *ppos, size_t count);
+#endif
 	long (*fallocate)(struct file *file, int mode, loff_t offset,
 			  loff_t len);
 	int (*show_fdinfo)(struct seq_file *m, struct file *f);
@@ -1597,9 +1587,6 @@ struct inode_operations {
 	int (*atomic_open)(struct inode *, struct dentry *,
 			   struct file *, unsigned open_flag,
 			   umode_t create_mode, int *opened);
-#if defined(CONFIG_SUPPORT_OPENWRT)
-	int (*dentry_open)(struct dentry *, struct file *, const struct cred *);
-#endif
 } ____cacheline_aligned;
 
 ssize_t rw_copy_check_uvector(int type, const struct iovec __user * uvector,
@@ -1659,6 +1646,8 @@ struct super_operations {
 #define S_IMA		1024	/* Inode has an associated IMA struct */
 #define S_AUTOMOUNT	2048	/* Automount/referral quasi-directory */
 #define S_NOSEC		4096	/* no suid or xattr security attributes */
+#define S_ATOMIC_COPY	8192	/* Pages mapped with this inode need to be
+				   atomically copied (gem) */
 
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
@@ -2033,9 +2022,6 @@ extern struct file *file_open_name(struct filename *, int, umode_t);
 extern struct file *filp_open(const char *, int, umode_t);
 extern struct file *file_open_root(struct dentry *, struct vfsmount *,
 				   const char *, int);
-#if defined(CONFIG_SUPPORT_OPENWRT)
-extern int vfs_open(const struct path *, struct file *, const struct cred *);
-#endif
 extern struct file * dentry_open(const struct path *, int, const struct cred *);
 extern int filp_close(struct file *, fl_owner_t id);
 
@@ -2086,6 +2072,13 @@ extern struct super_block *freeze_bdev(struct block_device *);
 extern void emergency_thaw_all(void);
 extern int thaw_bdev(struct block_device *bdev, struct super_block *sb);
 extern int fsync_bdev(struct block_device *);
+extern int fsync_super(struct super_block *);
+extern int fsync_no_super(struct block_device *);
+#define FS_FREEZER_FUSE 1
+#define FS_FREEZER_NORMAL 2
+#define FS_FREEZER_ALL (FS_FREEZER_FUSE | FS_FREEZER_NORMAL)
+void freeze_filesystems(int which);
+void thaw_filesystems(int which);
 #else
 static inline void bd_forget(struct inode *inode) {}
 static inline int sync_blockdev(struct block_device *bdev) { return 0; }
@@ -2236,9 +2229,6 @@ extern sector_t bmap(struct inode *, sector_t);
 #endif
 extern int notify_change(struct dentry *, struct iattr *);
 extern int inode_permission(struct inode *, int);
-#if defined(CONFIG_SUPPORT_OPENWRT)
-extern int __inode_permission(struct inode *, int);
-#endif
 extern int generic_permission(struct inode *, int);
 
 static inline bool execute_ok(struct inode *inode)
@@ -2445,12 +2435,8 @@ extern ssize_t generic_file_splice_write(struct pipe_inode_info *,
 		struct file *, loff_t *, size_t, unsigned int);
 extern ssize_t generic_splice_sendpage(struct pipe_inode_info *pipe,
 		struct file *out, loff_t *, size_t len, unsigned int flags);
-#if defined(CONFIG_SUPPORT_OPENWRT)
-extern long do_splice_direct(struct file *in, loff_t *ppos, struct file *out,
-		loff_t *opos, size_t len, unsigned int flags);
-#endif
 
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
+#ifdef CONFIG_SPLICE_NET_SUPPORT
 extern ssize_t generic_splice_from_socket(struct file *file, struct socket *sock,
 						loff_t __user *ppos, size_t count);
 #endif

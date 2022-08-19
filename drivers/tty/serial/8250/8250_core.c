@@ -521,13 +521,11 @@ static unsigned int serial_icr_read(struct uart_8250_port *up, int offset)
  */
 static void serial8250_clear_fifos(struct uart_8250_port *p)
 {
-	int fcr = 0;
-
 	if (p->capabilities & UART_CAP_FIFO) {
-		fcr = uart_config[p->port.type].fcr;
-		serial_out(p, UART_FCR, fcr | UART_FCR_ENABLE_FIFO);
-		serial_out(p, UART_FCR, fcr | UART_FCR_ENABLE_FIFO |
+		serial_out(p, UART_FCR, UART_FCR_ENABLE_FIFO);
+		serial_out(p, UART_FCR, UART_FCR_ENABLE_FIFO |
 			       UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT);
+		serial_out(p, UART_FCR, 0);
 	}
 }
 
@@ -1504,7 +1502,6 @@ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 	struct uart_8250_port *up =
 		container_of(port, struct uart_8250_port, port);
 	int dma_err = 0;
-	//struct tty_struct *tty = up->port.state->port.tty;
 
 	if (iir & UART_IIR_NO_INT)
 		return 0;
@@ -1520,11 +1517,7 @@ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 			dma_err = serial8250_rx_dma(up, iir);
 
 		if (!up->dma || dma_err)
-			//tty->ops->send_xchar(tty, STOP_CHAR(tty));
-			//serial_outp(up, UART_MCR, UART_MCR_RTS);
 			status = serial8250_rx_chars(up, status);
-			//tty->ops->send_xchar(tty, START_CHAR(tty));
-			//serial_outp(up, UART_MCR, 0);
 	}
 	serial8250_modem_status(up);
 	if (status & UART_LSR_THRE)

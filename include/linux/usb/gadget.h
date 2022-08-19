@@ -19,6 +19,7 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/list.h>
+#include <linux/usb.h>
 #include <linux/slab.h>
 #include <linux/scatterlist.h>
 #include <linux/types.h>
@@ -100,6 +101,7 @@ struct usb_request {
 	unsigned		no_interrupt:1;
 	unsigned		zero:1;
 	unsigned		short_not_ok:1;
+	int             number_of_packets;		/* (in) number of ISO packets */ 		
 
 	void			(*complete)(struct usb_ep *ep,
 					struct usb_request *req);
@@ -108,6 +110,11 @@ struct usb_request {
 
 	int			status;
 	unsigned		actual;
+
+	//for uac2 Feadback
+	int start_frame;
+	int iso_index; //jingao:add
+	struct usb_iso_packet_descriptor *iso_frame_desc;
 };
 
 /*-------------------------------------------------------------------------*/
@@ -444,6 +451,10 @@ static inline void usb_ep_fifo_flush(struct usb_ep *ep)
 /*-------------------------------------------------------------------------*/
 
 struct usb_dcd_config_params {
+#ifdef CONFIG_USB_MU3D_DRV
+	__u8 bU1Enabled; /* added for U3 */
+	__u8 bU2Enabled; /* added for U3 */
+#endif
 	__u8  bU1devExitLat;	/* U1 Device exit Latency */
 #define USB_DEFAULT_U1_DEV_EXIT_LAT	0x01	/* Less then 1 microsec */
 	__le16 bU2DevExitLat;	/* U2 Device exit Latency */
@@ -537,6 +548,9 @@ struct usb_gadget {
 	struct device			dev;
 	unsigned			out_epnum;
 	unsigned			in_epnum;
+#ifdef CONFIG_USB_MU3D_DRV
+	struct usb_dcd_config_params pwr_params;	/* added for U3 */
+#endif
 };
 
 static inline void set_gadget_data(struct usb_gadget *gadget, void *data)

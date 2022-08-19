@@ -1849,10 +1849,6 @@ base_error:
 	return ret;
 }
 
-extern struct snd_soc_component_driver mtk_i2s_component;
-extern struct snd_soc_dai_driver mtk_audio_drv;
-extern struct snd_soc_platform_driver mtk_soc_platform;
-
 /* probes a new socdev */
 static int soc_probe(struct platform_device *pdev)
 {
@@ -1872,13 +1868,7 @@ static int soc_probe(struct platform_device *pdev)
 	/* Bodge while we unpick instantiation */
 	card->dev = &pdev->dev;
 
-#ifdef CONFIG_SND_RALINK_SOC
-	snd_soc_register_component(&pdev->dev, &mtk_i2s_component,&mtk_audio_drv, 1);
-	snd_soc_register_platform(&pdev->dev,&mtk_soc_platform);
-#endif
-
-	snd_soc_register_card(card);
-	return 0;
+	return snd_soc_register_card(card);
 }
 
 static int soc_cleanup_card_resources(struct snd_soc_card *card)

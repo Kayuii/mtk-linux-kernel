@@ -194,12 +194,6 @@ include $(srctree)/arch/mips/Kbuild.platforms
 ifdef CONFIG_PHYSICAL_START
 load-y					= $(CONFIG_PHYSICAL_START)
 endif
-ifdef CONFIG_RALINK_MT7621
-load-y = 0xffffffff00000000+$(CONFIG_KERNEL_START_ADDR)
-endif
-
-entry-y				= 0x$(shell $(NM) vmlinux 2>/dev/null \
-					| grep "\bkernel_entry\b" | cut -f1 -d \ )
 
 cflags-y			+= -I$(srctree)/arch/mips/include/asm/mach-generic
 drivers-$(CONFIG_PCI)		+= arch/mips/pci/
@@ -231,9 +225,6 @@ KBUILD_CFLAGS	+= $(cflags-y)
 KBUILD_CPPFLAGS += -DVMLINUX_LOAD_ADDRESS=$(load-y)
 KBUILD_CPPFLAGS += -DDATAOFFSET=$(if $(dataoffset-y),$(dataoffset-y),0)
 
-bootvars-y	= VMLINUX_LOAD_ADDRESS=$(load-y) \
-		  VMLINUX_ENTRY_ADDRESS=$(entry-y)
-
 LDFLAGS			+= -m $(ld-emul)
 
 ifdef CONFIG_MIPS
@@ -259,25 +250,9 @@ drivers-$(CONFIG_OPROFILE)	+= arch/mips/oprofile/
 # suspend and hibernation support
 drivers-$(CONFIG_PM)	+= arch/mips/power/
 
-# boot image targets (arch/mips/boot/)
-boot-y			:= vmlinux.bin
-boot-y			+= vmlinux.ecoff
-boot-y			+= vmlinux.srec
-ifeq ($(shell expr $(load-y) \< 0xffffffff80000000 2> /dev/null), 0)
-boot-y			+= uImage
-boot-y			+= uImage.gz
-endif
-
-# compressed boot image targets (arch/mips/boot/compressed/)
-bootz-y			:= vmlinuz
-bootz-y			+= vmlinuz.bin
-bootz-y			+= vmlinuz.ecoff
-bootz-y			+= vmlinuz.srec
-
 ifdef CONFIG_LASAT
 rom.bin rom.sw: vmlinux
-	$(Q)$(MAKE) $(build)=arch/mips/lasat/image \
-		$(bootvars-y) $@
+	$(Q)$(MAKE) $(build)=arch/mips/lasat/image $@
 endif
 
 #
@@ -301,14 +276,13 @@ vmlinux.64: vmlinux
 all:	$(all-y)
 
 # boot
-$(boot-y): $(vmlinux-32) FORCE
-	$(Q)$(MAKE) $(build)=arch/mips/boot VMLINUX=$(vmlinux-32) \
-		$(bootvars-y) arch/mips/boot/$@
+vmlinux.bin vmlinux.ecoff vmlinux.srec: $(vmlinux-32) FORCE
+	$(Q)$(MAKE) $(build)=arch/mips/boot VMLINUX=$(vmlinux-32) arch/mips/boot/$@
 
 # boot/compressed
-$(bootz-y): $(vmlinux-32) FORCE
+vmlinuz vmlinuz.bin vmlinuz.ecoff vmlinuz.srec: $(vmlinux-32) FORCE
 	$(Q)$(MAKE) $(build)=arch/mips/boot/compressed \
-		$(bootvars-y) 32bit-bfd=$(32bit-bfd) $@
+	   VMLINUX_LOAD_ADDRESS=$(load-y) 32bit-bfd=$(32bit-bfd) $@
 
 
 CLEAN_FILES += vmlinux.32 vmlinux.64
@@ -345,8 +319,6 @@ define archhelp
 	echo '  vmlinuz.ecoff        - ECOFF zboot image'
 	echo '  vmlinuz.bin          - Raw binary zboot image'
 	echo '  vmlinuz.srec         - SREC zboot image'
-	echo '  uImage               - U-Boot image'
-	echo '  uImage.gz            - U-Boot image (gzip)'
 	echo
 	echo '  These will be default as appropriate for a configured platform.'
 endef

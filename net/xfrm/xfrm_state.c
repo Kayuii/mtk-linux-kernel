@@ -30,7 +30,7 @@
 
 #if (defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE)) && defined (CONFIG_INET_ESP)
 extern void
-ipsec_eip93Adapter_free(
+ipsec_eip93Adapter_mark_free(
 		    unsigned int spi
 		);
 #endif
@@ -563,7 +563,7 @@ int __xfrm_state_delete(struct xfrm_state *x)
 		if (x->type != NULL)
 		{	
 			if (x->type->description[3] == '4')
-        		ipsec_eip93Adapter_free(x->id.spi);
+        		ipsec_eip93Adapter_mark_free(x->id.spi);
 		}	
 #endif
 

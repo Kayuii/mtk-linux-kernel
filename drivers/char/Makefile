@@ -1,6 +1,7 @@
 #
 # Makefile for the kernel character device drivers.
 #
+subdir-ccflags-y += -I$(srctree)/arch/arm/include
 
 obj-y				+= mem.o random.o
 obj-$(CONFIG_TTY_PRINTK)	+= ttyprintk.o
@@ -17,10 +18,20 @@ obj-$(CONFIG_VIOTAPE)		+= viotape.o
 obj-$(CONFIG_IBM_BSR)		+= bsr.o
 obj-$(CONFIG_SGI_MBCS)		+= mbcs.o
 obj-$(CONFIG_BFIN_OTP)		+= bfin-otp.o
-
+obj-$(CONFIG_RALINK_HSDMA)	+= hs_dma.o
+obj-$(CONFIG_RALINK_HSDMA)	+= hs_dma_test.o
+#obj-$(CONFIG_RALINK_HSDMA)	+= mem_test.o
+obj-$(CONFIG_RALINK_GDMA)	+= ralink_gdma.o 
+#obj-$(CONFIG_RALINK_GDMA)	+= gdma_test.o
+obj-$(CONFIG_RALINK_PCM)	+= pcm/
 obj-$(CONFIG_PRINTER)		+= lp.o
 
+obj-$(CONFIG_MEDIATEK_GPIO)	+= mediatek_gpio.o
 obj-$(CONFIG_APM_EMULATION)	+= apm-emulation.o
+
+obj-$(CONFIG_RALINK_I2S)        += i2s/core/
+obj-$(CONFIG_RALINK_I2C_CODEC)  += i2s/codec/
+obj-$(CONFIG_I2S_WITH_AEC)      += i2s/aec/
 
 obj-$(CONFIG_DTLK)		+= dtlk.o
 obj-$(CONFIG_APPLICOM)		+= applicom.o
@@ -56,23 +67,11 @@ obj-$(CONFIG_PCMCIA)		+= pcmcia/
 obj-$(CONFIG_HANGCHECK_TIMER)	+= hangcheck-timer.o
 obj-$(CONFIG_TCG_TPM)		+= tpm/
 
+obj-$(CONFIG_DCC_TTY)		+= dcc_tty.o
 obj-$(CONFIG_PS3_FLASH)		+= ps3flash.o
-obj-$(CONFIG_RALINK_GPIO)	+= ralink_gpio.o
-obj-$(CONFIG_RALINK_HSDMA)	+= hs_dma.o
-obj-$(CONFIG_RALINK_HSDMA)	+= hs_dma_test.o
-#obj-$(CONFIG_RALINK_HSDMA)	+= mem_test.o
-obj-$(CONFIG_RALINK_GDMA)	+= ralink_gdma.o 
-#obj-$(CONFIG_RALINK_GDMA)	+= gdma_test.o
-obj-$(CONFIG_RALINK_SPI) 	+= spi_drv.o 
-obj-$(CONFIG_RALINK_I2C) 	+= i2c_drv.o
-obj-$(CONFIG_MTK_NFC_MT6605_SIM)+= mt6605_sim.o
-obj-$(CONFIG_RALINK_PCM)	+= pcm/
-obj-$(CONFIG_RALINK_I2S)        += i2s/core/
-obj-$(CONFIG_RALINK_I2C_CODEC)  += i2s/codec/
-obj-$(CONFIG_I2S_WITH_AEC)      += i2s/aec/
-obj-$(CONFIG_RALINK_SPDIF)      += spdif/
 
 obj-$(CONFIG_JS_RTC)		+= js-rtc.o
 js-rtc-y = rtc.o
 
 obj-$(CONFIG_TILE_SROM)		+= tile-srom.o
+obj-$(CONFIG_I2C_TEST)		+= i2c.o

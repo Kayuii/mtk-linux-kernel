@@ -863,8 +863,29 @@ int rndis_msg_parser(u8 configNr, u8 *buf)
 		 */
 		pr_warning("%s: unknown RNDIS message 0x%08X len %d\n",
 			__func__, MsgType, MsgLength);
-		print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET,
-				     buf, MsgLength);
+
+		{
+			unsigned i;
+			for (i = 0; i < MsgLength; i += 16) {
+				pr_debug("%03d: "
+					" %02x %02x %02x %02x"
+					" %02x %02x %02x %02x"
+					" %02x %02x %02x %02x"
+					" %02x %02x %02x %02x"
+					"\n",
+					i,
+					buf[i], buf [i+1],
+						buf[i+2], buf[i+3],
+					buf[i+4], buf [i+5],
+						buf[i+6], buf[i+7],
+					buf[i+8], buf [i+9],
+						buf[i+10], buf[i+11],
+					buf[i+12], buf [i+13],
+						buf[i+14], buf[i+15]);
+			}
+		}
+		//print_hex_dump_bytes(__func__, DUMP_PREFIX_OFFSET,
+		//		     buf, MsgLength);
 		break;
 	}
 
@@ -1127,10 +1148,14 @@ static struct proc_dir_entry *rndis_connect_state [RNDIS_MAX_CONFIGS];
 
 #endif /* CONFIG_USB_GADGET_DEBUG_FILES */
 
+static bool rndis_initialized;
 
 int rndis_init(void)
 {
 	u8 i;
+
+	if (rndis_initialized)
+		return 0;
 
 	for (i = 0; i < RNDIS_MAX_CONFIGS; i++) {
 #ifdef	CONFIG_USB_GADGET_DEBUG_FILES
@@ -1158,6 +1183,7 @@ int rndis_init(void)
 		INIT_LIST_HEAD(&(rndis_per_dev_params[i].resp_queue));
 	}
 
+	rndis_initialized = true;
 	return 0;
 }
 
@@ -1166,7 +1192,13 @@ void rndis_exit(void)
 #ifdef CONFIG_USB_GADGET_DEBUG_FILES
 	u8 i;
 	char name[20];
+#endif
 
+	if (!rndis_initialized)
+		return;
+	rndis_initialized = false;
+
+#ifdef CONFIG_USB_GADGET_DEBUG_FILES
 	for (i = 0; i < RNDIS_MAX_CONFIGS; i++) {
 		sprintf(name, NAME_TEMPLATE, i);
 		remove_proc_entry(name, NULL);

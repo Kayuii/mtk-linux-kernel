@@ -79,6 +79,10 @@ static int read_block(struct inode *inode, void *addr, unsigned int block,
 		goto dump;
 
 	dlen = le32_to_cpu(dn->ch.len) - UBIFS_DATA_NODE_SZ;
+
+	if (UBIFS_COMPR_LZ4K ==  le16_to_cpu(dn->compr_type))
+	  out_len = len; //Jack modify for lz4k decompress	
+	else
 	out_len = UBIFS_BLOCK_SIZE;
 	err = ubifs_decompress(&dn->data, dlen, addr, &out_len,
 			       le16_to_cpu(dn->compr_type));
@@ -648,6 +652,10 @@ static int populate_page(struct ubifs_info *c, struct page *page,
 				goto out_err;
 
 			dlen = le32_to_cpu(dn->ch.len) - UBIFS_DATA_NODE_SZ;
+			
+			if (UBIFS_COMPR_LZ4K ==  le16_to_cpu(dn->compr_type))				
+			  out_len = len; //Jack modify for lz4k decompress	
+			else
 			out_len = UBIFS_BLOCK_SIZE;
 			err = ubifs_decompress(&dn->data, dlen, addr, &out_len,
 					       le16_to_cpu(dn->compr_type));
@@ -1575,6 +1583,10 @@ const struct inode_operations ubifs_symlink_inode_operations = {
 	.follow_link = ubifs_follow_link,
 	.setattr     = ubifs_setattr,
 	.getattr     = ubifs_getattr,
+	.setxattr    = ubifs_setxattr,
+	.getxattr    = ubifs_getxattr,
+	.listxattr   = ubifs_listxattr,
+	.removexattr = ubifs_removexattr,
 };
 
 const struct file_operations ubifs_file_operations = {

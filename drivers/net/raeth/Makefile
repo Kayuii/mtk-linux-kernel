@@ -3,9 +3,7 @@ raeth-objs := ra_mac.o mii_mgr.o ra_rfrw.o
 
 
 #EXTRA_CFLAGS   += -DCONFIG_RAETH_MULTIPLE_RX_RING
-EXTRA_CFLAGS    += -DCONFIG_RAETH_RW_PDMAPTR_FROM_VAR
-#EXTRA_CFLAGS   += -DUSE_BUILD_SKB
-EXTRA_CFLAGS   += -DUSE_PREFETCH  
+
 ifeq ($(CONFIG_RAETH_QOS),y)
 raeth-objs += ra_qos.o
 endif
@@ -62,5 +60,3 @@ endif
 ifeq ($(CONFIG_TASKLET_WORKQUEUE_SW),y)
 EXTRA_CFLAGS   += -DTASKLET_WORKQUEUE_SW
 endif
-
-ccflags-y += -Werror

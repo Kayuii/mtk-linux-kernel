@@ -2,7 +2,6 @@
 # Makefile for MMC/SD host controller drivers
 #
 
-obj-$(CONFIG_MTK_MMC) 		+= mtk-mmc/
 obj-$(CONFIG_MMC_ARMMMCI)	+= mmci.o
 obj-$(CONFIG_MMC_PXA)		+= pxamci.o
 obj-$(CONFIG_MMC_MXC)		+= mxcmmc.o

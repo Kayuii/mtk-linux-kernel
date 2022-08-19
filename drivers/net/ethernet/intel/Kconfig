@@ -130,6 +130,10 @@ config IGB_DCA
 	  driver.  DCA is a method for warming the CPU cache before data
 	  is used, with the intent of lessening the impact of cache misses.
 
+config IGB_V5215
+	tristate "Intel(R) IGB Driver (New Version: v5.2.15"
+	depends on PCI
+
 config IGBVF
 	tristate "Intel(R) 82576 Virtual Function Ethernet support"
 	depends on PCI

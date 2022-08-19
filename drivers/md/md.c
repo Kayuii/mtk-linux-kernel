@@ -33,6 +33,7 @@
 */
 
 #include <linux/kthread.h>
+#include <linux/freezer.h>
 #include <linux/blkdev.h>
 #include <linux/sysctl.h>
 #include <linux/seq_file.h>
@@ -7360,11 +7361,14 @@ void md_do_sync(struct md_thread *thread)
 	 *
 	 */
 
+	set_freezable();
+
 	do {
 		mddev->curr_resync = 2;
 
 	try_again:
-		if (kthread_should_stop())
+
+		if (kthread_freezable_should_stop(NULL))
 			set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 
 		if (test_bit(MD_RECOVERY_INTR, &mddev->recovery))
@@ -7386,6 +7390,9 @@ void md_do_sync(struct md_thread *thread)
 					 * time 'round when curr_resync == 2
 					 */
 					continue;
+
+				try_to_freeze();
+
 				/* We need to wait 'interruptible' so as not to
 				 * contribute to the load average, and not to
 				 * be caught by 'softlockup'
@@ -7398,6 +7405,7 @@ void md_do_sync(struct md_thread *thread)
 					       " share one or more physical units)\n",
 					       desc, mdname(mddev), mdname(mddev2));
 					mddev_put(mddev2);
+					try_to_freeze();
 					if (signal_pending(current))
 						flush_signals(current);
 					schedule();
@@ -7515,7 +7523,7 @@ void md_do_sync(struct md_thread *thread)
 						 || kthread_should_stop());
 		}
 
-		if (kthread_should_stop())
+		if (kthread_freezable_should_stop(NULL))
 			goto interrupted;
 
 		sectors = mddev->pers->sync_request(mddev, j, &skipped,
@@ -7559,8 +7567,7 @@ void md_do_sync(struct md_thread *thread)
 			last_mark = next;
 		}
 
-
-		if (kthread_should_stop())
+		if (kthread_freezable_should_stop(NULL))
 			goto interrupted;
 
 
@@ -7736,8 +7743,10 @@ no_add:
  */
 void md_check_recovery(struct mddev *mddev)
 {
-	if (mddev->suspended)
+#ifdef CONFIG_FREEZER
+	if (mddev->suspended || unlikely(atomic_read(&system_freezing_cnt)))
 		return;
+#endif
 
 	if (mddev->bitmap)
 		bitmap_daemon_work(mddev);
@@ -8072,6 +8081,7 @@ static int md_set_badblocks(struct badblocks *bb, sector_t s, int sectors,
 	u64 *p;
 	int lo, hi;
 	int rv = 1;
+	unsigned long flags;
 
 	if (bb->shift < 0)
 		/* badblocks are disabled */
@@ -8086,7 +8096,7 @@ static int md_set_badblocks(struct badblocks *bb, sector_t s, int sectors,
 		sectors = next - s;
 	}
 
-	write_seqlock_irq(&bb->lock);
+	write_seqlock_irqsave(&bb->lock, flags);
 
 	p = bb->page;
 	lo = 0;
@@ -8202,7 +8212,7 @@ static int md_set_badblocks(struct badblocks *bb, sector_t s, int sectors,
 	bb->changed = 1;
 	if (!acknowledged)
 		bb->unacked_exist = 1;
-	write_sequnlock_irq(&bb->lock);
+	write_sequnlock_irqrestore(&bb->lock, flags);
 
 	return rv;
 }

@@ -189,6 +189,18 @@ static struct mtd_partition rt2880_partitions[] = {
 
 #endif // defined (CONFIG_MTD_NOR_RALINK) || defined (CONFIG_MTD_ANY_RALINK) //
 
+#if defined (CONFIG_MTD_NOR_RALINK) || defined (CONFIG_MTD_ANY_RALINK)
+static int ralink_lock(struct mtd_info *mtd, loff_t ofs, size_t len)
+{
+	return 0;
+}
+
+static int ralink_unlock(struct mtd_info *mtd, loff_t ofs, size_t len)
+{
+	return 0;
+}
+#endif
+
 
 int ra_check_flash_type(void)
 {
@@ -330,7 +342,7 @@ int __init rt2880_mtd_init(void)
 
 	for (i = 0; i < NUM_FLASH_BANKS; i++) {
 		printk(KERN_NOTICE "ralink flash device: 0x%x at 0x%x\n",
-				(unsigned int)ralink_map[i].size, (unsigned int)ralink_map[i].phys);
+				ralink_map[i].size, ralink_map[i].phys);
 
 		ralink_map[i].virt = ioremap_nocache(ralink_map[i].phys, ralink_map[i].size);
 		if (!ralink_map[i].virt) {
@@ -342,6 +354,8 @@ int __init rt2880_mtd_init(void)
 		ralink_mtd[i] = do_map_probe("cfi_probe", &ralink_map[i]);
 		if (ralink_mtd[i]) {
 			ralink_mtd[i]->owner = THIS_MODULE;
+			//ralink_mtd[i]->lock = ralink_lock;
+			//ralink_mtd[i]->unlock = ralink_unlock;
 			++found;
 		}
 		else

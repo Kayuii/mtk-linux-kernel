@@ -23,4 +23,3 @@ ifeq ($(CONFIG_RAETH_GMAC2),y)
 	EXTRA_CFLAGS += -DCONFIG_PSEUDO_SUPPORT
 endif
 
-ccflags-y += -Werror

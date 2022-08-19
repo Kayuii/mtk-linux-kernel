@@ -4,7 +4,6 @@
 struct task_struct;
 struct pt_regs;
 
-#ifdef CONFIG_STACKTRACE
 struct task_struct;
 
 struct stack_trace {
@@ -13,6 +12,7 @@ struct stack_trace {
 	int skip;	/* input argument: How many entries to skip */
 };
 
+#ifdef CONFIG_STACKTRACE
 extern void save_stack_trace(struct stack_trace *trace);
 extern void save_stack_trace_regs(struct pt_regs *regs,
 				  struct stack_trace *trace);

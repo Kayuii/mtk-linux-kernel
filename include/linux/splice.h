@@ -20,7 +20,6 @@
 #define SPLICE_F_MORE	(0x04)	/* expect more data */
 #define SPLICE_F_GIFT	(0x08)	/* pages passed in are a gift */
 
-#define SPLICE_F_SMB	(0x10)	/* data from Samba applications */
 /*
  * Passed to the actors
  */
@@ -60,12 +59,12 @@ struct splice_pipe_desc {
 	void (*spd_release)(struct splice_pipe_desc *, unsigned int);
 };
 
-#if defined (CONFIG_SPLICE_NET_SUPPORT)
+#if defined(CONFIG_SPLICE_NET_SUPPORT)
 struct recvfile_ctl_blk {
-	struct page *rv_page;
-	loff_t rv_pos;
-	size_t rv_count;
-	void *rv_fsdata;
+       struct page *rv_page;
+       loff_t rv_pos;
+       size_t rv_count;
+       void *rv_fsdata;
 };
 #endif
 
@@ -93,11 +92,6 @@ extern ssize_t splice_to_pipe(struct pipe_inode_info *,
 			      struct splice_pipe_desc *);
 extern ssize_t splice_direct_to_actor(struct file *, struct splice_desc *,
 				      splice_direct_actor *);
-extern long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
-			    loff_t *ppos, size_t len, unsigned int flags);
-extern long do_splice_to(struct file *in, loff_t *ppos,
-			  struct pipe_inode_info *pipe, size_t len,
-			  unsigned int flags);
 
 /*
  * for dynamic pipe sizing

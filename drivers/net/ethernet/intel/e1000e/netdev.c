@@ -55,15 +55,6 @@
 
 #define DRV_EXTRAVERSION "-k"
 
-#if defined(CONFIG_RA_HW_NAT_NIC_USB)
-/* bruce+
- */
-
-extern int (*ra_sw_nat_hook_rx)(struct sk_buff *skb);
-extern int (*ra_sw_nat_hook_tx)(struct sk_buff *skb);
-#endif
-
-
 #define DRV_VERSION "2.3.2" DRV_EXTRAVERSION
 char e1000e_driver_name[] = "e1000e";
 const char e1000e_driver_version[] = DRV_VERSION;
@@ -561,37 +552,11 @@ static void e1000_receive_skb(struct e1000_adapter *adapter,
 	e1000e_rx_hwtstamp(adapter, staterr, skb);
 
 	skb->protocol = eth_type_trans(skb, netdev);
-#if defined (CONFIG_RA_HW_NAT_NIC_USB)
-#include "../../../../../net/nat/hw_nat/ra_nat.h"	
-	FOE_MAGIC_TAG(skb)= FOE_MAGIC_PCI;
 
-	/* bruce+
-	 * ra_sw_nat_hook_rx return 1 --> continue
-	 * ra_sw_nat_hook_rx return 0 --> FWD & without netif_rx
-	 */ 
-	if(ra_sw_nat_hook_rx!= NULL)
-	{
-		//spin_lock_irqsave(&adapter->sw_r_lock, flags);
-		if(ra_sw_nat_hook_rx(skb)) {
-			if (staterr & E1000_RXD_STAT_VP)
-				__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
-
-			napi_gro_receive(&adapter->napi, skb);
-
-		}
-		//spin_unlock_irqrestore(&adapter->sw_r_lock, flags);
-	}else{
-		if (staterr & E1000_RXD_STAT_VP)
-			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
-
-		napi_gro_receive(&adapter->napi, skb);
-	}
-#else
 	if (staterr & E1000_RXD_STAT_VP)
 		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), tag);
 
 	napi_gro_receive(&adapter->napi, skb);
-#endif /* CONFIG_RA_HW_NAT_NIC_USB */
 }
 
 /**
@@ -2190,9 +2155,13 @@ static int e1000_request_irq(struct e1000_adapter *adapter)
 		e1000e_reset_interrupt_capability(adapter);
 		adapter->int_mode = E1000E_INT_MODE_LEGACY;
 	}
-
+#if defined	(CONFIG_ARCH_MT7623)
+	err = request_irq(adapter->pdev->irq, e1000_intr, IRQF_TRIGGER_LOW,
+			  netdev->name, netdev);
+#else
 	err = request_irq(adapter->pdev->irq, e1000_intr, IRQF_SHARED,
 			  netdev->name, netdev);
+#endif
 	if (err)
 		e_err("Unable to allocate interrupt, Error: %d\n", err);
 
@@ -5487,19 +5456,6 @@ static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
-#if defined(CONFIG_RA_HW_NAT_NIC_USB)
-/* bruce+
- */	
-	if(ra_sw_nat_hook_tx!= NULL)
-	{
-		//spin_lock_irqsave(&adapter->sw_t_lock, flags);
-		ra_sw_nat_hook_tx(skb);
-		//spin_unlock_irqrestore(&adapter->sw_t_lock, flags);
-	}
-	//skb_dump1(skb);
-	//printk("skb->mac = %x, skb->nh = %x, skb->h = %x\n", skb->mac, skb->nh, skb->h);
-	//printk("skb->head = %x, skb->data= %x, skb->tail = %x, skb->end = %s\n", skb->head, skb->data, skb->tail, skb->end);
-#endif
 
 	/* The minimum packet size with TCTL.PSP set is 17 bytes so
 	 * pad skb in order to meet this minimum size requirement

@@ -1,44 +1,18 @@
-###############################################################################
-#  Jan 2007 Bruce Chang
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License version 2 as published
+# by the Free Software Foundation.#
+# Makefile for the Ralink common stuff
 #
-#  Initial Release
-#
-#
-#
-###############################################################################
-EXTRA_CFLAGS += -Werror
+# Copyright (C) 2009-2011 Gabor Juhos <juhosg@openwrt.org>
+# Copyright (C) 2013 John Crispin <blogic@openwrt.org>
 
-.S.s:
-	$(CPP) $(CFLAGS) $< -o $*.s
-.S.o:
-	$(CC) $(CFLAGS) -c $< -o $*.o
+obj-y := prom.o of.o reset.o clk.o irq.o
 
-obj-y    := reset.o init.o irq.o \
-            memory.o printf.o cmdline.o setup.o time.o patchinfo.o
+obj-$(CONFIG_SOC_RT288X) += rt288x.o
+obj-$(CONFIG_SOC_RT305X) += rt305x.o
+obj-$(CONFIG_SOC_RT3883) += rt3883.o
+obj-$(CONFIG_SOC_MT7620) += mt7620.o
 
-ifeq ($(CONFIG_MIPS_MT_SMP),y)
-	obj-y += malta-amon.o
-endif
+obj-$(CONFIG_EARLY_PRINTK) += early_printk.o
 
-obj-$(CONFIG_KERNEL_NVRAM) += nvram.o
-obj-$(CONFIG_PCI) += pci.o
-obj-$(CONFIG_DWC_OTG) += lm.o
-obj-$(CONFIG_RALINK_TIMER_WDG) +=  ralink_wdt.o
-obj-$(CONFIG_RALINK_TIMER_DFS) +=  rt_timer.o
-obj-$(CONFIG_RT_DMA) +=  dev-dma.o
-obj-$(CONFIG_MTK_MTD_NAND) +=  dev-nand.o
-ifeq ($(CONFIG_RALINK_MT7621),y)
-obj-$(CONFIG_MTD_ANY_RALINK) +=  dev-nand.o
-endif
-obj-$(CONFIG_I2C_MTK) +=  i2c-slave.o
-
-obj-$(CONFIG_RALINK_RT3883) +=  ehci_ohci.o udc.o
-obj-$(CONFIG_RALINK_RT3352) +=  ehci_ohci.o udc.o
-obj-$(CONFIG_RALINK_RT5350) +=  ehci_ohci.o udc.o
-obj-$(CONFIG_RALINK_RT6855) +=  ehci_ohci.o udc.o
-obj-$(CONFIG_RALINK_MT7620) +=  ehci_ohci.o udc.o
-obj-$(CONFIG_RALINK_MT7628) +=  ehci_ohci.o udc.o
-
-ifeq ($(CONFIG_SND_MT76XX_SOC), y)
-obj-y += mt_audio.o
-endif
+obj-y += dts/

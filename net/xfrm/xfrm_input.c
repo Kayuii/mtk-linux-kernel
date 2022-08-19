@@ -193,7 +193,7 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 		skb_dst_force(skb);
 
 #if defined (CONFIG_RALINK_HWCRYPTO) || defined (CONFIG_RALINK_HWCRYPTO_MODULE)
-		if (family == AF_INET)
+		if (x->type->proto==IPPROTO_ESP)
 		{
 			if (x->type->input(x, skb) == 1)
 			{
@@ -201,6 +201,10 @@ int xfrm_input(struct sk_buff *skb, int nexthdr, __be32 spi, int encap_type)
 			}
 			else
 				goto drop;
+		}
+		else if (x->type->proto==IPPROTO_AH)
+		{
+			nexthdr = x->type->input(x, skb);
 		}
 		else	
 #endif

@@ -727,23 +727,10 @@ static void skb_release_all(struct sk_buff *skb)
 void __kfree_skb(struct sk_buff *skb)
 {
 #if defined(CONFIG_RA_HW_NAT) || defined(CONFIG_RA_HW_NAT_MODULE)
-	if (skb->cloned != 1) {
-		if(IS_MAGIC_TAG_VALID(skb) || (FOE_MAGIC_TAG(skb) == FOE_MAGIC_PPE))
-			memset(FOE_INFO_START_ADDR(skb), 0, FOE_INFO_LEN);
-	}
+	if(IS_MAGIC_TAG_VALID(skb) || (FOE_MAGIC_TAG(skb) == FOE_MAGIC_PPE))
+		memset(FOE_INFO_START_ADDR(skb), 0, FOE_INFO_LEN);
 #endif
-
-#if defined(CONFIG_RAETH_SKB_RECYCLE_2K)
-	skb_release_head_state(skb);
-	if (skb->skb_recycling_callback) {
-		if (skb->skb_recycling_callback(skb))
-			return;
-	}
-	skb->skb_recycling_callback = NULL;
-	skb_release_data(skb);
-#else
 	skb_release_all(skb);
-#endif
 	kfree_skbmem(skb);
 }
 EXPORT_SYMBOL(__kfree_skb);
@@ -871,9 +858,6 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 #endif
 	new->vlan_proto		= old->vlan_proto;
 	new->vlan_tci		= old->vlan_tci;
-#if defined(CONFIG_RAETH_SKB_RECYCLE_2K)
-	new->skb_recycling_callback = NULL;
-#endif
 
 	skb_copy_secmark(new, old);
 }
@@ -897,10 +881,6 @@ static struct sk_buff *__skb_clone(struct sk_buff *n, struct sk_buff *skb)
 	n->cloned = 1;
 	n->nohdr = 0;
 	n->destructor = NULL;
-#if defined(CONFIG_RAETH_SKB_RECYCLE_2K)
-	n->skb_recycling_callback = NULL;
-	skb->skb_recycling_callback = NULL;
-#endif
 	C(tail);
 	C(end);
 	C(head);
@@ -1246,11 +1226,6 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
 
 		if (skb_has_frag_list(skb))
 			skb_clone_fraglist(skb);
-
-
-#if defined(CONFIG_RAETH_SKB_RECYCLE_2K)
-	skb->skb_recycling_callback = NULL;
-#endif
 
 		skb_release_data(skb);
 	} else {
@@ -3089,112 +3064,6 @@ err:
 }
 EXPORT_SYMBOL_GPL(skb_segment);
 
-#if defined(CONFIG_RAETH_SKB_RECYCLE_2K)
-#define SKBMGR_RX_BUF_LEN                       SKB_WITH_OVERHEAD(2048)
-#define SKBMGR_DEF_HOT_LIST_LEN                 512
-
-int skbmgr_hot_list_len = SKBMGR_DEF_HOT_LIST_LEN;
-int skbmgr_max_list_len = 0;
-
-struct sk_buff_head		rx0_recycle;
-
-struct sk_buff *skbmgr_alloc_skb2k(void)
-{
-        struct sk_buff *skb;
-	unsigned long flags;
-
-        if (skb_queue_len(&rx0_recycle)) {
-                unsigned int size;
-                struct skb_shared_info *shinfo;
-                u8 *data;
-
-		local_irq_save(flags);
-                skb = __skb_dequeue_tail(&rx0_recycle);
-		local_irq_restore(flags);
-
-                if (unlikely(skb == NULL))
-                        goto try_normal;
-                
-		size = skb->truesize - sizeof(struct sk_buff);
-                data = skb->head;
-		
-		/*
-                 * See comment in sk_buff definition, just before the 'tail' member
-                 */
-                memset(skb, 0, offsetof(struct sk_buff, tail));
-                skb->truesize = size + sizeof(struct sk_buff);
-                atomic_set(&skb->users, 1);
-                skb->head = data;
-                skb->data = data;
-                skb_reset_tail_pointer(skb);
-                skb->end = skb->tail + size;
-                /* make sure we initialize shinfo sequentially */
-                shinfo = skb_shinfo(skb);
-                atomic_set(&shinfo->dataref, 1);
-                shinfo->nr_frags  = 0;
-                shinfo->gso_size = 0;
-                shinfo->gso_segs = 0;
-                shinfo->gso_type = 0;
-                shinfo->ip6_frag_id = 0;
-                shinfo->frag_list = NULL;
-                skb->skb_recycling_callback = skbmgr_recycling_callback;
-
-                return skb;
-        }
-
-try_normal:
-        skb = alloc_skb(SKBMGR_RX_BUF_LEN, GFP_ATOMIC|__GFP_NOWARN);
-        if (likely(skb))
-                skb->skb_recycling_callback = skbmgr_recycling_callback;
-        return skb;
-}
-
-EXPORT_SYMBOL(skbmgr_alloc_skb2k);
-
-int skbmgr_recycling_callback(struct sk_buff *skb)
-{
-
-	unsigned long flags;
-        
-	if (skb_queue_len(&rx0_recycle) < skbmgr_hot_list_len) {
-
-                if ((skb->truesize - sizeof(struct sk_buff) != SKBMGR_RX_BUF_LEN) ||
-                        (skb_shinfo(skb)->nr_frags) ||
-                        (skb_shinfo(skb)->frag_list)) {
-                        return 0;
-                }
-
-                if (skb_queue_len(&rx0_recycle) > skbmgr_max_list_len)
-                        skbmgr_max_list_len = skb_queue_len(&rx0_recycle) + 1;
-
-		local_irq_save(flags);
-                __skb_queue_head(&rx0_recycle, skb);
-		local_irq_restore(flags);
-
-                return 1;
-        }
-
-        return 0;
-}
-
-EXPORT_SYMBOL(skbmgr_recycling_callback);
-
-void skbmgr_free_all_skbs(void)
-{
-        struct sk_buff *skb;
-        int i;
-
-        for (i=0; i<NR_CPUS; i++) {
-                while ((skb = skb_dequeue(&rx0_recycle)) != NULL) {
-                        skb->skb_recycling_callback = NULL;
-                        kfree_skbmem(skb);
-                }
-        }
-
-}
-
-#endif
-
 int skb_gro_receive(struct sk_buff **head, struct sk_buff *skb)
 {
 	struct sk_buff *p = *head;
@@ -3340,10 +3209,6 @@ EXPORT_SYMBOL_GPL(skb_gro_receive);
 
 void __init skb_init(void)
 {
-#if defined(CONFIG_RAETH_SKB_RECYCLE_2K)
-	skb_queue_head_init(&rx0_recycle);
-#endif
-
 	skbuff_head_cache = kmem_cache_create("skbuff_head_cache",
 					      sizeof(struct sk_buff),
 					      0,
@@ -3355,7 +3220,6 @@ void __init skb_init(void)
 						0,
 						SLAB_HWCACHE_ALIGN|SLAB_PANIC,
 						NULL);
-						
 #if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
  skbuff_cb_store_cache = kmem_cache_create("skbuff_cb_store_cache",
  sizeof(struct skb_cb_table),

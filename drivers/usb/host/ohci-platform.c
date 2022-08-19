@@ -17,8 +17,6 @@
 #include <linux/platform_device.h>
 #include <linux/usb/ohci_pdriver.h>
 
-#include "mtk-phy.h"
-
 static int ohci_platform_reset(struct usb_hcd *hcd)
 {
 	struct platform_device *pdev = to_platform_device(hcd->self.controller);
@@ -135,12 +133,6 @@ static int ohci_platform_probe(struct platform_device *dev)
 		err = PTR_ERR(hcd->regs);
 		goto err_put_hcd;
 	}
-
-#if defined (CONFIG_RALINK_MT7628)
-	        /* MTK PHY init */
-	        mt7628_phy_init();
-#endif
-
 	err = usb_add_hcd(hcd, irq, IRQF_SHARED);
 	if (err)
 		goto err_put_hcd;

@@ -133,19 +133,16 @@ config MV_XOR
 	---help---
 	  Enable support for the Marvell XOR engine.
 
-config RT_DMA
-        bool "Ralink DMA engine support"
+config MTK_DMA
+        bool "Mediatek DMA engine support"
         select DMA_ENGINE
         ---help---
-          Enable support for the Ralink DMA engine.
+          Enable support for the Mediatek DMA engine.
 choice
         prompt "DMA TYPE"
 
-config RT_DMA_HSDMA
+config MTK_DMA_HSDMA
         bool "High speed DMA"
-
-config RT_DMA_GDMA
-        bool "Generic DMA"
 
 endchoice
 
